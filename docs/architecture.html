@@ -1,0 +1,1844 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A visual mental model of Team Relay: trust boundaries, standing approvals, execution, files, state, and deployment.">
+  <title>Team Relay — Architecture mental model</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #eef4f6;
+      --paper: #fbfdfd;
+      --paper-strong: #ffffff;
+      --ink: #102c3b;
+      --ink-soft: #4d6570;
+      --line: #b9cbd1;
+      --line-strong: #76909a;
+      --blue: #176b9f;
+      --blue-soft: #dcecf5;
+      --teal: #087c72;
+      --teal-soft: #d7eee9;
+      --amber: #ad6400;
+      --amber-soft: #f8e8c7;
+      --red: #b43a2c;
+      --red-soft: #f5ddd8;
+      --violet: #6553a4;
+      --violet-soft: #e8e4f5;
+      --shadow: 0 24px 70px rgba(16, 44, 59, 0.12);
+      --mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+      --sans: "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 5rem;
+    }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(rgba(16, 44, 59, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(16, 44, 59, 0.035) 1px, transparent 1px),
+        var(--canvas);
+      background-size: 28px 28px;
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    a { color: var(--blue); }
+
+    a:focus-visible,
+    button:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid var(--amber);
+      outline-offset: 3px;
+    }
+
+    .skip-link {
+      position: absolute;
+      top: -5rem;
+      left: 1rem;
+      z-index: 50;
+      padding: .65rem 1rem;
+      background: var(--ink);
+      color: white;
+      text-decoration: none;
+    }
+
+    .skip-link:focus { top: 1rem; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      min-height: 64px;
+      padding: .75rem max(1rem, calc((100vw - 1180px) / 2));
+      border-bottom: 1px solid rgba(118, 144, 154, .55);
+      background: rgba(238, 244, 246, .94);
+      backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: .7rem;
+      color: var(--ink);
+      font-weight: 700;
+      letter-spacing: -.02em;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border: 2px solid var(--ink);
+      background: var(--amber-soft);
+      font-family: var(--mono);
+      font-size: .78rem;
+      transform: rotate(-2deg);
+    }
+
+    .brand small {
+      color: var(--ink-soft);
+      font-size: .76rem;
+      font-weight: 500;
+    }
+
+    .topnav {
+      display: flex;
+      gap: .25rem;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .topnav::-webkit-scrollbar { display: none; }
+
+    .topnav a {
+      padding: .35rem .55rem;
+      color: var(--ink-soft);
+      font-size: .8rem;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .topnav a:hover { color: var(--ink); }
+
+    main {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: clamp(2rem, 6vw, 5rem) 0 5rem;
+    }
+
+    .hero {
+      position: relative;
+      padding: clamp(1.5rem, 4vw, 3.5rem);
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      top: -80px;
+      right: -80px;
+      width: 260px;
+      height: 260px;
+      border: 36px solid var(--blue-soft);
+      border-radius: 50%;
+      opacity: .75;
+      pointer-events: none;
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: .55rem;
+      margin-bottom: 1.2rem;
+      color: var(--ink-soft);
+      font-size: .82rem;
+    }
+
+    .status-dot {
+      width: .65rem;
+      height: .65rem;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 0 4px var(--amber-soft);
+    }
+
+    h1, h2, h3, p { margin-top: 0; }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      max-width: 16ch;
+      margin-bottom: 1rem;
+      font-family: var(--serif);
+      font-size: clamp(2.6rem, 7vw, 5.7rem);
+      font-weight: 500;
+      letter-spacing: -.055em;
+      line-height: .97;
+    }
+
+    .hero-lede {
+      position: relative;
+      z-index: 1;
+      max-width: 64ch;
+      margin-bottom: 2.2rem;
+      color: var(--ink-soft);
+      font-size: clamp(1.05rem, 2vw, 1.28rem);
+      line-height: 1.55;
+    }
+
+    .network-map {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 80px minmax(0, .82fr) 80px minmax(0, 1fr);
+      align-items: stretch;
+      margin-top: 2rem;
+    }
+
+    .zone {
+      min-height: 250px;
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .zone.requester { border-top: 6px solid var(--blue); }
+    .zone.relay { border-top: 6px solid var(--violet); }
+    .zone.recipient { border-top: 6px solid var(--teal); }
+
+    .zone-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      margin-bottom: 1rem;
+      font-weight: 700;
+    }
+
+    .zone-title code {
+      color: var(--ink-soft);
+      font-size: .72rem;
+      font-weight: 500;
+    }
+
+    .stack {
+      display: grid;
+      gap: .55rem;
+    }
+
+    .component {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .7rem;
+      min-height: 42px;
+      padding: .55rem .7rem;
+      border-left: 3px solid var(--line-strong);
+      background: #f1f6f7;
+      font-size: .85rem;
+      line-height: 1.35;
+    }
+
+    .component b { font-weight: 650; }
+    .component span { color: var(--ink-soft); font-size: .75rem; text-align: right; }
+
+    .airlock {
+      margin: .75rem 0;
+      padding: .8rem;
+      border: 2px solid var(--amber);
+      background: var(--amber-soft);
+      color: #633800;
+      text-align: center;
+    }
+
+    .airlock strong { display: block; font-size: .95rem; }
+    .airlock small { display: block; margin-top: .15rem; }
+
+    .wire {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 100%;
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: .68rem;
+      text-align: center;
+    }
+
+    .wire::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 2px;
+      background: repeating-linear-gradient(90deg, var(--line-strong) 0 7px, transparent 7px 12px);
+    }
+
+    .wire::after {
+      content: "›";
+      position: absolute;
+      right: -2px;
+      top: calc(50% - 18px);
+      color: var(--line-strong);
+      font-family: var(--sans);
+      font-size: 2rem;
+    }
+
+    .wire span {
+      position: relative;
+      z-index: 1;
+      padding: .25rem .4rem;
+      background: var(--paper-strong);
+    }
+
+    .authority-rule {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      background: var(--ink);
+      color: white;
+    }
+
+    .authority-rule strong {
+      color: #ffcc79;
+      font-family: var(--mono);
+      font-size: .78rem;
+      white-space: nowrap;
+    }
+
+    .authority-rule code {
+      color: white;
+      font-family: var(--mono);
+      font-size: clamp(.72rem, 1.4vw, .92rem);
+      white-space: normal;
+    }
+
+    .section {
+      margin-top: clamp(4rem, 8vw, 7rem);
+    }
+
+    .section-heading {
+      display: grid;
+      grid-template-columns: minmax(180px, .38fr) minmax(0, 1fr);
+      gap: clamp(1.5rem, 5vw, 5rem);
+      align-items: start;
+      margin-bottom: 2rem;
+      padding-bottom: 1.2rem;
+      border-bottom: 1px solid var(--line-strong);
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(2rem, 4vw, 3.25rem);
+      font-weight: 500;
+      letter-spacing: -.035em;
+      line-height: 1.04;
+    }
+
+    .section-heading p {
+      max-width: 66ch;
+      margin: .25rem 0 0;
+      color: var(--ink-soft);
+    }
+
+    .journey {
+      display: grid;
+      grid-template-columns: minmax(230px, .48fr) minmax(0, 1fr);
+      gap: 1.5rem;
+      align-items: start;
+    }
+
+    .journey-controls {
+      display: grid;
+      gap: 1px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .journey-controls button {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: .75rem;
+      align-items: center;
+      width: 100%;
+      min-height: 54px;
+      padding: .65rem .8rem;
+      border: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .journey-controls button:hover { background: var(--blue-soft); }
+    .journey-controls button[aria-selected="true"] { background: var(--ink); color: white; }
+
+    .step-number {
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+
+    .journey-controls button[aria-selected="true"] .step-number { color: #ffcc79; }
+
+    .journey-stage {
+      min-height: 430px;
+      padding: clamp(1.2rem, 4vw, 2.4rem);
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: 12px 12px 0 var(--blue-soft);
+    }
+
+    .step-kicker {
+      margin-bottom: .35rem;
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 700;
+    }
+
+    .journey-stage h3 {
+      margin-bottom: .6rem;
+      font-family: var(--serif);
+      font-size: clamp(1.7rem, 3vw, 2.5rem);
+      font-weight: 500;
+      line-height: 1.12;
+    }
+
+    .journey-stage > p { max-width: 62ch; color: var(--ink-soft); }
+
+    .signal-path {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .65rem;
+      margin: 1.6rem 0;
+    }
+
+    .signal-node {
+      position: relative;
+      min-height: 110px;
+      padding: .8rem;
+      border: 1px solid var(--line);
+      background: #f1f6f7;
+      color: var(--ink-soft);
+      font-size: .76rem;
+    }
+
+    .signal-node strong { display: block; margin-bottom: .35rem; color: var(--ink); font-size: .88rem; }
+    .signal-node.active { border: 2px solid var(--blue); background: var(--blue-soft); }
+    .signal-node.active[data-zone="recipient"] { border-color: var(--teal); background: var(--teal-soft); }
+    .signal-node.active[data-zone="approval"] { border-color: var(--amber); background: var(--amber-soft); }
+    .signal-node.active[data-zone="relay"] { border-color: var(--violet); background: var(--violet-soft); }
+
+    .status-track {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .35rem;
+      margin-top: 1.2rem;
+    }
+
+    .status-chip {
+      padding: .25rem .45rem;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      color: var(--ink-soft);
+      font-family: var(--mono);
+      font-size: .67rem;
+    }
+
+    .status-chip.active { border-color: var(--blue); background: var(--blue); color: white; }
+    .status-chip.terminal.active { border-color: var(--teal); background: var(--teal); }
+
+    .plain-note {
+      margin: 1rem 0 0;
+      padding-left: .9rem;
+      border-left: 4px solid var(--amber);
+      color: var(--ink-soft);
+      font-size: .9rem;
+    }
+
+    .approval-levels {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      border: 1px solid var(--line-strong);
+      background: var(--line);
+      gap: 1px;
+    }
+
+    .approval-level {
+      min-width: 0;
+      padding: 1.2rem;
+      background: var(--paper-strong);
+    }
+
+    .approval-level:first-child { box-shadow: inset 0 5px 0 var(--blue); }
+    .approval-level:nth-child(2) { box-shadow: inset 0 5px 0 var(--amber); }
+    .approval-level:nth-child(3) { box-shadow: inset 0 5px 0 var(--teal); }
+    .approval-level:last-child { box-shadow: inset 0 5px 0 var(--violet); }
+
+    .approval-level code {
+      display: block;
+      overflow-wrap: anywhere;
+      margin-bottom: .7rem;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .approval-level strong { display: block; margin-bottom: .3rem; }
+    .approval-level p { margin: 0; color: var(--ink-soft); font-size: .84rem; }
+
+    .approval-mechanics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .approval-mechanics > div {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+      color: var(--ink-soft);
+      font-size: .86rem;
+    }
+
+    .approval-mechanics strong { color: var(--ink); }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .decision-column {
+      padding: 1.25rem;
+      border-right: 1px solid var(--line);
+    }
+
+    .decision-column:last-child { border-right: 0; }
+    .decision-column.requester-owner { border-top: 5px solid var(--blue); }
+    .decision-column.relay-owner { border-top: 5px solid var(--violet); }
+    .decision-column.recipient-owner { border-top: 5px solid var(--teal); }
+
+    .decision-column h3 { margin-bottom: .2rem; font-size: 1.05rem; }
+    .decision-column > p { color: var(--ink-soft); font-size: .82rem; }
+
+    .clean-list {
+      margin: 1rem 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .clean-list li {
+      position: relative;
+      padding: .55rem 0 .55rem 1.25rem;
+      border-top: 1px solid var(--line);
+      font-size: .88rem;
+    }
+
+    .clean-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 1.05rem;
+      width: .45rem;
+      height: .45rem;
+      background: currentColor;
+      transform: rotate(45deg);
+      opacity: .6;
+    }
+
+    .no-power {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 1rem;
+      padding: .85rem 1rem;
+      border: 1px solid var(--red);
+      background: var(--red-soft);
+      color: #66251e;
+    }
+
+    .no-power strong { font-family: var(--mono); font-size: .76rem; white-space: nowrap; }
+
+    .state-lanes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    .state-lane {
+      position: relative;
+      min-height: 340px;
+      padding: 1.25rem;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .state-lane::before {
+      content: "";
+      position: absolute;
+      left: 1.25rem;
+      top: 4.7rem;
+      bottom: 1.25rem;
+      width: 2px;
+      background: var(--line);
+    }
+
+    .state-lane h3 { margin-bottom: .2rem; }
+    .state-lane > p { color: var(--ink-soft); font-size: .8rem; }
+
+    .state-item {
+      position: relative;
+      margin: .8rem 0 .8rem 1.3rem;
+      padding: .55rem .7rem;
+      background: #f1f6f7;
+      font-size: .82rem;
+    }
+
+    .state-item::before {
+      content: "";
+      position: absolute;
+      left: -1.68rem;
+      top: .95rem;
+      width: .68rem;
+      height: .68rem;
+      border: 2px solid var(--paper-strong);
+      border-radius: 50%;
+      background: var(--line-strong);
+    }
+
+    .state-item.private::before { background: var(--teal); }
+    .state-item.durable::before { background: var(--violet); }
+    .state-item.process::before { background: var(--amber); }
+
+    .legend-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: 1rem;
+      color: var(--ink-soft);
+      font-size: .78rem;
+    }
+
+    .legend-row span::before {
+      content: "";
+      display: inline-block;
+      width: .65rem;
+      height: .65rem;
+      margin-right: .35rem;
+      border-radius: 50%;
+      vertical-align: -.04rem;
+      background: var(--line-strong);
+    }
+
+    .legend-row .private-key::before { background: var(--teal); }
+    .legend-row .durable-key::before { background: var(--violet); }
+    .legend-row .process-key::before { background: var(--amber); }
+
+    .profile-switcher {
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .profile-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-bottom: 1px solid var(--line-strong);
+      background: var(--line);
+      gap: 1px;
+    }
+
+    .profile-tabs button {
+      min-height: 50px;
+      padding: .65rem 1rem;
+      border: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 650 .88rem var(--sans);
+      cursor: pointer;
+    }
+
+    .profile-tabs button:hover { background: var(--blue-soft); }
+    .profile-tabs button[aria-selected="true"] { background: var(--ink); color: white; }
+
+    .profile-panel { padding: clamp(1.2rem, 4vw, 2.2rem); }
+    .profile-panel[hidden] { display: none; }
+
+    .profile-summary {
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .profile-summary h3 {
+      font-family: var(--serif);
+      font-size: 2rem;
+      font-weight: 500;
+      line-height: 1.1;
+    }
+
+    .switch-list { display: grid; gap: .5rem; }
+
+    .switch-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: .8rem;
+      padding: .6rem 0;
+      border-bottom: 1px solid var(--line);
+      font-size: .86rem;
+    }
+
+    .switch-row code { font-size: .75rem; }
+    .yes { color: var(--teal); }
+    .no { color: var(--red); }
+    .choose { color: var(--amber); }
+
+    .runtime-table-wrap { margin-top: 1.4rem; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    th, td { padding: .75rem .65rem; border-top: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--ink-soft); font-size: .74rem; font-weight: 650; }
+    td:first-child { font-weight: 650; }
+
+    .file-route {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(90px, 1fr));
+      gap: .55rem;
+      align-items: stretch;
+    }
+
+    .file-stop {
+      position: relative;
+      min-height: 145px;
+      padding: .8rem .65rem;
+      border-top: 4px solid var(--line-strong);
+      background: var(--paper-strong);
+      box-shadow: 0 0 0 1px var(--line);
+      font-size: .75rem;
+    }
+
+    .file-stop::after {
+      content: "›";
+      position: absolute;
+      right: -.47rem;
+      top: 48px;
+      z-index: 2;
+      color: var(--line-strong);
+      font-size: 1.4rem;
+    }
+
+    .file-stop:last-child::after { content: none; }
+    .file-stop:nth-child(1), .file-stop:nth-child(7) { border-top-color: var(--blue); }
+    .file-stop:nth-child(4) { border-top-color: var(--amber); background: var(--amber-soft); }
+    .file-stop:nth-child(5) { border-top-color: var(--teal); }
+    .file-stop strong { display: block; margin-bottom: .4rem; font-size: .84rem; }
+    .file-stop code { font-size: .67rem; word-break: break-word; }
+
+    .limit-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 1rem;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: white;
+    }
+
+    .limit {
+      padding: .8rem 1rem;
+      border-right: 1px solid rgba(255,255,255,.25);
+    }
+
+    .limit:last-child { border-right: 0; }
+    .limit strong { display: block; color: #ffcc79; font-family: var(--mono); font-size: 1.2rem; }
+    .limit span { font-size: .76rem; }
+
+    .warning-band {
+      margin-top: 1rem;
+      padding: 1rem;
+      border-left: 6px solid var(--red);
+      background: var(--red-soft);
+      color: #66251e;
+    }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: .7rem;
+      margin-top: 1rem;
+      padding-top: 1.25rem;
+    }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      top: 2rem;
+      left: 7%;
+      right: 7%;
+      height: 3px;
+      background: var(--line-strong);
+    }
+
+    .moment { position: relative; z-index: 1; }
+
+    .moment-dot {
+      width: 1.5rem;
+      height: 1.5rem;
+      margin: 0 auto .75rem;
+      border: 5px solid var(--paper-strong);
+      border-radius: 50%;
+      background: var(--blue);
+      box-shadow: 0 0 0 2px var(--blue);
+    }
+
+    .moment.boundary .moment-dot { background: var(--red); box-shadow: 0 0 0 2px var(--red); }
+    .moment.terminal .moment-dot { background: var(--teal); box-shadow: 0 0 0 2px var(--teal); }
+
+    .moment strong { display: block; font-size: .78rem; line-height: 1.25; text-align: center; }
+    .moment p { margin-top: .4rem; color: var(--ink-soft); font-size: .7rem; line-height: 1.4; text-align: center; }
+
+    .crash-choice {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1.4rem;
+    }
+
+    .crash-side {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .crash-side.safe { border-left: 5px solid var(--teal); }
+    .crash-side.stop { border-left: 5px solid var(--red); }
+    .crash-side h3 { margin-bottom: .35rem; font-size: 1rem; }
+    .crash-side p { margin: 0; color: var(--ink-soft); font-size: .82rem; }
+
+    .deployment-board {
+      display: grid;
+      grid-template-columns: minmax(0, .95fr) 78px minmax(0, 1.05fr);
+      align-items: stretch;
+    }
+
+    .deployment-side {
+      padding: 1.3rem;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .deployment-side h3 { margin-bottom: .2rem; }
+    .deployment-side > p { color: var(--ink-soft); font-size: .82rem; }
+
+    .server-unit {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .65rem;
+      margin: 1rem 0;
+    }
+
+    .server-box {
+      min-height: 105px;
+      padding: .8rem;
+      background: var(--violet-soft);
+      border-bottom: 4px solid var(--violet);
+      font-size: .78rem;
+    }
+
+    .server-box strong { display: block; margin-bottom: .35rem; font-size: .9rem; }
+
+    .native-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .65rem;
+      margin-top: 1rem;
+    }
+
+    .native-box {
+      min-height: 105px;
+      padding: .75rem;
+      border-bottom: 4px solid var(--teal);
+      background: var(--teal-soft);
+      font-size: .74rem;
+    }
+
+    .native-box strong { display: block; margin-bottom: .25rem; font-size: .84rem; }
+
+    .deploy-wire {
+      position: relative;
+      display: grid;
+      place-items: center;
+      font: .68rem var(--mono);
+      color: var(--ink-soft);
+      text-align: center;
+    }
+
+    .deploy-wire::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 2px;
+      background: var(--line-strong);
+    }
+
+    .deploy-wire span { position: relative; padding: .25rem; background: var(--canvas); }
+
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .provider {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+    }
+
+    .provider h3 { margin-bottom: .3rem; font-size: 1rem; }
+    .provider p { margin-bottom: .6rem; color: var(--ink-soft); font-size: .8rem; }
+    .provider code { font-size: .73rem; }
+
+    .skill-rail {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 1rem;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .skill {
+      padding: 1rem;
+      background: var(--paper-strong);
+      font-size: .82rem;
+    }
+
+    .skill strong { display: block; margin-bottom: .35rem; }
+
+    .proof-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .proof {
+      padding: 1.25rem;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .proof.proven { border-top: 6px solid var(--teal); }
+    .proof.preview { border-top: 6px solid var(--red); }
+    .proof h3 { margin-bottom: .25rem; }
+    .proof > p { color: var(--ink-soft); font-size: .82rem; }
+
+    details {
+      margin-top: 1rem;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.55);
+    }
+
+    summary {
+      padding: .8rem 0;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    details > div { padding: 0 0 1rem; color: var(--ink-soft); }
+
+    code {
+      font-family: var(--mono);
+      font-size: .86em;
+    }
+
+    .token-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem;
+      margin: .8rem 0;
+    }
+
+    .token {
+      padding: .3rem .48rem;
+      border: 1px solid var(--line);
+      background: var(--paper-strong);
+      font: .74rem var(--mono);
+    }
+
+    .glossary {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+
+    .term { padding: 1rem; background: var(--paper-strong); }
+    .term dt { font-weight: 700; }
+    .term dd { margin: .25rem 0 0; color: var(--ink-soft); font-size: .84rem; }
+
+    footer {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto 2rem;
+      padding: 1.5rem 0;
+      border-top: 1px solid var(--line-strong);
+      color: var(--ink-soft);
+      font-size: .78rem;
+    }
+
+    .js-note { display: none; }
+
+    @media (max-width: 960px) {
+      .topnav { display: none; }
+      .network-map { grid-template-columns: 1fr; gap: .7rem; }
+      .wire { min-height: 56px; }
+      .wire::before { left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; }
+      .wire::after { right: auto; left: calc(50% - 7px); top: auto; bottom: -6px; transform: rotate(90deg); }
+      .journey { grid-template-columns: 1fr; }
+      .journey-controls { grid-template-columns: repeat(4, 1fr); }
+      .journey-controls button { grid-template-columns: 1fr; gap: 0; min-height: 68px; text-align: center; }
+      .decision-grid, .state-lanes { grid-template-columns: 1fr; }
+      .approval-levels, .approval-mechanics { grid-template-columns: repeat(2, 1fr); }
+      .decision-column { border-right: 0; border-bottom: 1px solid var(--line); }
+      .decision-column:last-child { border-bottom: 0; }
+      .file-route { grid-template-columns: repeat(4, 1fr); }
+      .file-stop::after { content: none; }
+      .timeline { grid-template-columns: repeat(3, 1fr); row-gap: 1.5rem; }
+      .timeline::before { display: none; }
+      .deployment-board { grid-template-columns: 1fr; gap: .7rem; }
+      .deploy-wire { min-height: 52px; }
+      .deploy-wire::before { left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; }
+    }
+
+    @media (max-width: 680px) {
+      main { width: min(100% - 1rem, 1180px); padding-top: .5rem; }
+      .topbar { padding: .55rem .75rem; }
+      .brand small { display: none; }
+      .hero { padding: 1.25rem; }
+      .hero::after { width: 170px; height: 170px; border-width: 24px; }
+      .network-map { margin-top: 1rem; }
+      .authority-rule, .section-heading { grid-template-columns: 1fr; }
+      .authority-rule { gap: .35rem; }
+      .journey-controls { grid-template-columns: repeat(2, 1fr); }
+      .journey-controls button { min-height: 58px; }
+      .signal-path { grid-template-columns: 1fr; }
+      .signal-node { min-height: auto; }
+      .profile-tabs { grid-template-columns: 1fr; }
+      .profile-summary, .crash-choice, .proof-grid { grid-template-columns: 1fr; }
+      .approval-levels, .approval-mechanics { grid-template-columns: 1fr; }
+      .file-route { grid-template-columns: repeat(2, 1fr); }
+      .limit-strip { grid-template-columns: 1fr; }
+      .limit { border-right: 0; border-bottom: 1px solid rgba(255,255,255,.25); }
+      .limit:last-child { border-bottom: 0; }
+      .timeline { grid-template-columns: repeat(2, 1fr); }
+      .server-unit, .native-row, .provider-grid, .skill-rail, .glossary { grid-template-columns: 1fr; }
+      .no-power { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+
+    @media print {
+      body { background: white; font-size: 11pt; }
+      .topbar, .journey-controls { display: none; }
+      main { width: 100%; padding: 0; }
+      .hero, .journey-stage { box-shadow: none; }
+      .section { break-inside: avoid; margin-top: 2rem; }
+      .journey { display: block; }
+      .journey-stage { min-height: 0; }
+      details { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the architecture</a>
+
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Team Relay architecture home">
+      <span class="brand-mark" aria-hidden="true">TR</span>
+      <span>Team Relay</span>
+      <small>architecture mental model</small>
+    </a>
+    <nav class="topnav" aria-label="Document sections">
+      <a href="#journey">Request journey</a>
+      <a href="#approvals">Approvals</a>
+      <a href="#authority">Authority</a>
+      <a href="#state">State</a>
+      <a href="#permissions">Permissions</a>
+      <a href="#files">Files</a>
+      <a href="#deployment">Deployment</a>
+      <a href="#proof">Reality check</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="status-line">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Provider-neutral architecture</span>
+        <span>·</span>
+        <span>Developer preview</span>
+        <span>·</span>
+        <span>Updated 6 September 2026</span>
+      </div>
+
+      <h1>One agent may ask. The other human sets the boundary.</h1>
+      <p class="hero-lede">
+        Team Relay lets your local AI agent ask a teammate's local AI agent for help.
+        It moves a proposal across the network; it does not move your authority across
+        the network.
+      </p>
+
+      <div class="network-map" role="img" aria-label="Requester laptop connects through the Team Relay server to a recipient laptop, where a recipient-controlled approval airlock gates the local AI runtime.">
+        <article class="zone requester">
+          <div class="zone-title">Requester's laptop <code>member A</code></div>
+          <div class="stack">
+            <div class="component"><b>Claude / Codex</b><span>asks for help</span></div>
+            <div class="component"><b>Team Relay MCP</b><span>local stdio tool</span></div>
+            <div class="component"><b>Local config</b><span>device token + aliases</span></div>
+            <div class="component"><b>Download root</b><span>returned files only</span></div>
+          </div>
+        </article>
+
+        <div class="wire" aria-hidden="true"><span>HTTPS<br>request</span></div>
+
+        <article class="zone relay">
+          <div class="zone-title">Relay <code>shared</code></div>
+          <div class="stack">
+            <div class="component"><b>HTTP API</b><span>auth + rules</span></div>
+            <div class="component"><b>SSE hub</b><span>live events</span></div>
+            <div class="component"><b>Redis / Valkey</b><span>durable state</span></div>
+            <div class="component"><b>Admin API</b><span>invite + revoke</span></div>
+          </div>
+        </article>
+
+        <div class="wire" aria-hidden="true"><span>SSE<br>notice</span></div>
+
+        <article class="zone recipient">
+          <div class="zone-title">Teammate's laptop <code>member B</code></div>
+          <div class="stack">
+            <div class="component"><b>Receiver daemon</b><span>outbound connection</span></div>
+            <div class="airlock">
+              <strong>Human permission airlock</strong>
+              <small>Ask every time · 30 min · teammate · everyone</small>
+            </div>
+            <div class="component"><b>Local policy</b><span>recipient-owned</span></div>
+            <div class="component"><b>Claude / Codex / runner</b><span>local context</span></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="authority-rule">
+        <strong>What may run</strong>
+        <code>authenticated sender ∩ same organization ∩ recipient approval rule ∩ local policy ∩ runtime enforcement</code>
+      </div>
+    </section>
+
+    <section class="section" id="journey">
+      <div class="section-heading">
+        <h2>Walk one request</h2>
+        <p>
+          The important separation is between <em>asking</em>, <em>allowing</em>, and
+          <em>running</em>. Click through the steps to see which machine is active and
+          what has crossed the trust boundary.
+        </p>
+      </div>
+
+      <div class="journey">
+        <div class="journey-controls" role="tablist" aria-label="Request journey steps">
+          <button id="journey-tab-1" role="tab" aria-controls="journey-panel" aria-selected="true" data-step="0"><span class="step-number">01</span><span>Discover</span></button>
+          <button id="journey-tab-2" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="1"><span class="step-number">02</span><span>Propose</span></button>
+          <button id="journey-tab-3" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="2"><span class="step-number">03</span><span>Notify</span></button>
+          <button id="journey-tab-4" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="3"><span class="step-number">04</span><span>Inspect</span></button>
+          <button id="journey-tab-5" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="4"><span class="step-number">05</span><span>Choose approval</span></button>
+          <button id="journey-tab-6" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="5"><span class="step-number">06</span><span>Run locally</span></button>
+          <button id="journey-tab-7" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="6"><span class="step-number">07</span><span>Return</span></button>
+          <button id="journey-tab-8" role="tab" aria-controls="journey-panel" aria-selected="false" data-step="7"><span class="step-number">08</span><span>Follow up</span></button>
+        </div>
+
+        <article class="journey-stage" id="journey-panel" role="tabpanel" aria-labelledby="journey-tab-1" aria-live="polite">
+          <div class="step-kicker" id="journey-kicker">Step 1 · requester</div>
+          <h3 id="journey-title">Find a live teammate agent</h3>
+          <p id="journey-copy">
+            The requester's agent calls <code>find_teammates</code>. The relay returns
+            other members' live, accepting receiver agents. It never returns a target
+            owned by the requester's own member identity.
+          </p>
+
+          <div class="signal-path" aria-label="Active part of the system">
+            <div class="signal-node active" data-node="requester" data-zone="requester"><strong>Requester</strong><span id="requester-signal">MCP asks the directory</span></div>
+            <div class="signal-node" data-node="relay" data-zone="relay"><strong>Relay</strong><span id="relay-signal">Authenticates membership</span></div>
+            <div class="signal-node" data-node="recipient" data-zone="recipient"><strong>Recipient</strong><span id="recipient-signal">No action yet</span></div>
+          </div>
+
+          <div class="status-track" aria-label="Request states">
+            <span class="status-chip" data-status="preparing">preparing</span>
+            <span class="status-chip" data-status="awaiting_approval">awaiting_approval</span>
+            <span class="status-chip" data-status="accepted">accepted</span>
+            <span class="status-chip" data-status="running">running</span>
+            <span class="status-chip terminal" data-status="completed">completed</span>
+          </div>
+
+          <p class="plain-note" id="journey-note">
+            Discovery exposes capability and availability metadata, not another person's local credentials or private runtime session.
+          </p>
+          <noscript><p class="plain-note">Enable JavaScript to click through the remaining steps. The rest of this document remains fully readable.</p></noscript>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="approvals">
+      <div class="section-heading">
+        <h2>How often should the receiver ask?</h2>
+        <p>
+          The recipient chooses the convenience boundary. A broader choice changes
+          only whether another human prompt appears; it never grants another tool,
+          workspace, model, MCP, network path, or runtime capability.
+        </p>
+      </div>
+
+      <div class="approval-levels" aria-label="Recipient approval levels">
+        <article class="approval-level">
+          <code>ask_always</code>
+          <strong>One request</strong>
+          <p>Allow this turn, save no grant, and ask again for the next request.</p>
+        </article>
+        <article class="approval-level">
+          <code>conversation_30m</code>
+          <strong>One conversation · 30 minutes</strong>
+          <p>Match this conversation until one fixed deadline. New activity never extends the clock.</p>
+        </article>
+        <article class="approval-level">
+          <code>teammate_always</code>
+          <strong>One authenticated teammate</strong>
+          <p>Match the member identity across that teammate's current and future enrolled devices.</p>
+        </article>
+        <article class="approval-level">
+          <code>all_always</code>
+          <strong>Every teammate · this receiver</strong>
+          <p>Match all authenticated members, including future members, but only on this receiving installation.</p>
+        </article>
+      </div>
+
+      <div class="approval-mechanics">
+        <div><strong>Local and durably reversible.</strong> Grants stay in private receiver state. Revocation leaves a tombstone so recovery cannot recreate the grant; it does not retract an already durable per-request allow.</div>
+        <div><strong>Still one decision per request.</strong> A match creates a fresh relay <code>allow_once</code> decision and execution claim. Missing legacy member identity fails closed to a human prompt.</div>
+        <div><strong>Capped by the approved request.</strong> A match may use only the same workspace aliases or a subset, same-or-weaker modes, and no more attachments or total decoded bytes.</div>
+        <div><strong>Bound to this authority.</strong> Relay enrollment, recipient agent, effective policy, canonical paths, and a one-way fingerprint of the fixed runtime configuration plus MCP isolation all participate. Claude freezes its filtered MCP set; Codex uses an empty set verified against residual system configuration before launch. Authority-changing updates invalidate prior grants.</div>
+      </div>
+
+      <p class="plain-note">
+        The requester cannot request, select, or inspect a standing grant. From the requester's side, every turn simply begins at <code>awaiting_approval</code> and progresses only when the recipient's receiver decides. The current approval surface is the CLI or authenticated loopback API—not a packaged tray UI. While a teammate runtime is active, sensitive loopback endpoints return <code>423 Locked</code>; authenticated health remains available.
+      </p>
+    </section>
+
+    <section class="section" id="authority">
+      <div class="section-heading">
+        <h2>Who controls what?</h2>
+        <p>
+          The requester describes the work. The relay enforces shared protocol rules.
+          The recipient owns every choice that can grant local capability.
+        </p>
+      </div>
+
+      <div class="decision-grid">
+        <article class="decision-column requester-owner">
+          <h3>Requester chooses</h3>
+          <p>The proposal, never the teammate's machine configuration.</p>
+          <ul class="clean-list">
+            <li>Exact teammate agent</li>
+            <li>Title and self-contained prompt</li>
+            <li>A narrower requested access level</li>
+            <li>Opt-in files from configured aliases</li>
+            <li>Expiry and idempotency key</li>
+          </ul>
+        </article>
+
+        <article class="decision-column relay-owner">
+          <h3>Relay enforces</h3>
+          <p>Identity, routing, state transitions, and payload bounds.</p>
+          <ul class="clean-list">
+            <li>Bearer credential and organization membership</li>
+            <li>No self-loop, even across the same member's devices</li>
+            <li>Exact target, decision, claim, and result retries</li>
+            <li>Request lifecycle and expiry</li>
+            <li>File count, names, hashes, and byte limits</li>
+          </ul>
+        </article>
+
+        <article class="decision-column recipient-owner">
+          <h3>Recipient owns</h3>
+          <p>The actual authority on the recipient workstation.</p>
+          <ul class="clean-list">
+            <li>Inspect, Deny, or choose one of four approval levels</li>
+            <li>Claude Code, Codex, or external runner</li>
+            <li>Model override—or the adapter's isolated default</li>
+            <li>Working directory and workspace aliases</li>
+            <li>Writes, shell, network, MCP, and environment policy</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="no-power">
+        <span><strong>The key invariant:</strong> a remote requester may narrow the recipient's local policy, but can never turn on a capability the recipient disabled.</span>
+        <strong>remote ≤ local</strong>
+      </div>
+    </section>
+
+    <section class="section" id="state">
+      <div class="section-heading">
+        <h2>Where state lives</h2>
+        <p>
+          Conversation continuity does not mean sharing provider session IDs. Team
+          Relay carries its own conversation ID; the recipient maps it to a private
+          Claude or Codex session stored only on that machine.
+        </p>
+      </div>
+
+      <div class="state-lanes">
+        <article class="state-lane">
+          <h3>Requester workstation</h3>
+          <p>Private to member A</p>
+          <div class="state-item private">Device credential and MCP config</div>
+          <div class="state-item private">Workspace aliases and upload opt-in</div>
+          <div class="state-item private">Requester's own agent context</div>
+          <div class="state-item private"><code>team-relay-downloads/</code></div>
+        </article>
+
+        <article class="state-lane">
+          <h3>Relay server</h3>
+          <p>Shared organization service</p>
+          <div class="state-item durable">Members, devices, invites, audit records</div>
+          <div class="state-item durable">Requests, conversations, answers, artifacts</div>
+          <div class="state-item durable">Presence and tombstoned agent IDs</div>
+          <div class="state-item process">Live SSE fan-out is process-local</div>
+        </article>
+
+        <article class="state-lane">
+          <h3>Recipient workstation</h3>
+          <p>Private to member B</p>
+          <div class="state-item private">Runtime, model, policy, workspaces</div>
+          <div class="state-item private">Approval control credential</div>
+          <div class="state-item private">Listable, durably revocable standing grants</div>
+          <div class="state-item private">Pending inbox and mutation journal</div>
+          <div class="state-item private">Provider session ID and local memories</div>
+        </article>
+      </div>
+
+      <div class="legend-row" aria-label="State legend">
+        <span class="private-key">private local state</span>
+        <span class="durable-key">durable Redis / Valkey state</span>
+        <span class="process-key">process-local state</span>
+      </div>
+
+      <p class="plain-note">
+        The relay can read retained prompts, answers, and file bytes. HTTPS protects transport; Base64 is only an encoding. Version 1 is not end-to-end encrypted.
+      </p>
+    </section>
+
+    <section class="section" id="permissions">
+      <div class="section-heading">
+        <h2>The permission airlock</h2>
+        <p>
+          Setup asks the recipient to choose a local profile. Every request still gets
+          a fresh relay decision, while a matching local grant may remove the repeated
+          human prompt. The runtime adapter must honestly report how strongly it can
+          enforce the profile.
+        </p>
+      </div>
+
+      <div class="profile-switcher">
+        <div class="profile-tabs" role="tablist" aria-label="Permission profiles">
+          <button id="profile-tab-read" role="tab" aria-controls="profile-read" aria-selected="true">Read only</button>
+          <button id="profile-tab-write" role="tab" aria-controls="profile-write" aria-selected="false">Guarded write</button>
+          <button id="profile-tab-custom" role="tab" aria-controls="profile-custom" aria-selected="false">Custom</button>
+        </div>
+
+        <div class="profile-panel" id="profile-read" role="tabpanel" aria-labelledby="profile-tab-read">
+          <div class="profile-summary">
+            <div>
+              <h3>Strongest portable inspect-only request</h3>
+              <p>
+                No writes, shell, or MCPs. Claude Code uses a read-tool allowlist.
+                Codex cannot portably disable shell while keeping its read-only sandbox,
+                so Team Relay fails closed for this composite profile.
+              </p>
+            </div>
+            <div class="switch-list" aria-label="Read only capabilities">
+              <div class="switch-row"><span>File writes</span><code class="no">off</code></div>
+              <div class="switch-row"><span>Shell</span><code class="no">off</code></div>
+              <div class="switch-row"><span>Network</span><code class="no">off</code></div>
+              <div class="switch-row"><span>Inherited MCPs</span><code class="no">off</code></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-panel" id="profile-write" role="tabpanel" aria-labelledby="profile-tab-write" hidden>
+          <div class="profile-summary">
+            <div>
+              <h3>Normal local agent, inside recipient-selected workspaces</h3>
+              <p>
+                Editing, tools, and network are enabled. Claude Code may load its
+                frozen filtered MCP set. Current Codex recipient runs keep MCPs off
+                and supply a workspace-write sandbox; Claude relies more heavily on
+                tool controls and best-effort command rules.
+              </p>
+            </div>
+            <div class="switch-list" aria-label="Guarded write capabilities">
+              <div class="switch-row"><span>File writes</span><code class="yes">on</code></div>
+              <div class="switch-row"><span>Shell</span><code class="yes">on</code></div>
+              <div class="switch-row"><span>Network</span><code class="yes">on</code></div>
+              <div class="switch-row"><span>Inherited MCPs</span><code class="choose">adapter</code></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="profile-panel" id="profile-custom" role="tabpanel" aria-labelledby="profile-tab-custom" hidden>
+          <div class="profile-summary">
+            <div>
+              <h3>Recipient assembles the switches</h3>
+              <p>
+                Setup begins conservatively with capabilities off. The recipient may
+                enable writes, shell, network, and MCP inheritance in private config.
+                Unsupported combinations fail closed instead of silently weakening policy.
+              </p>
+            </div>
+            <div class="switch-list" aria-label="Custom capabilities">
+              <div class="switch-row"><span>File writes</span><code class="choose">choose</code></div>
+              <div class="switch-row"><span>Shell</span><code class="choose">choose</code></div>
+              <div class="switch-row"><span>Network</span><code class="choose">choose</code></div>
+              <div class="switch-row"><span>Inherited MCPs</span><code class="choose">choose</code></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="runtime-table-wrap">
+          <table>
+            <thead>
+              <tr><th>Adapter</th><th>Local context</th><th>Resume</th><th>Important boundary</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Claude Code</td><td>Normal memories, instructions, skills</td><td>Private session resume</td><td>Enabled Bash cannot be made read-only; some denial is best-effort</td></tr>
+              <tr><td>Codex</td><td>Auth, sessions, memories, instructions; mutable config excluded</td><td>Private thread resume</td><td>Local MCPs and profiles are disabled; system MCP residue and old CLIs fail preflight</td></tr>
+              <tr><td>External</td><td>Runner-defined</td><td>If runner reports support</td><td>Capabilities are self-reported by recipient-installed code</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="plain-note">
+        The model is blank by default. Claude Code and external runners then use their normal local default; isolated Codex uses its built-in/account default because <code>config.toml</code> is excluded. Only the recipient may add an exact model override. Nested Team Relay calls and a baseline of dangerous commands remain denied in every profile, subject to each adapter's stated enforcement strength.
+      </p>
+    </section>
+
+    <section class="section" id="files">
+      <div class="section-heading">
+        <h2>How files move</h2>
+        <p>
+          Files travel inline with the authenticated request as Base64-encoded bytes.
+          Upload and download paths are constrained on the local clients; execution
+          bytes remain behind the recipient's per-request <code>allow_once</code> gate.
+        </p>
+      </div>
+
+      <div class="file-route" aria-label="File transfer route">
+        <div class="file-stop"><strong>1. Local alias</strong>Requester selects a file beneath an explicitly configured workspace.</div>
+        <div class="file-stop"><strong>2. Safe reader</strong>Rejects traversal, symlinks, special files, sensitive paths, and unsafe names.</div>
+        <div class="file-stop"><strong>3. Encode</strong><code>content_base64</code>, byte size, MIME type, and SHA-256 travel over HTTPS.</div>
+        <div class="file-stop"><strong>4. Inspect</strong>Recipient sees the full prompt plus file metadata—not the bytes—before deciding.</div>
+        <div class="file-stop"><strong>5. Execute</strong>Only a per-request relay <code>allow_once</code> decision releases attachment bytes into the local sandbox; a standing grant may create that decision without another prompt.</div>
+        <div class="file-stop"><strong>6. Return</strong>Finished files from the exact return directory go back through the relay.</div>
+        <div class="file-stop"><strong>7. Download</strong>Requester explicitly saves beneath fixed <code>team-relay-downloads/</code>; no overwrite.</div>
+      </div>
+
+      <div class="limit-strip" aria-label="File limits in each direction">
+        <div class="limit"><strong>5 files</strong><span>maximum per request or result</span></div>
+        <div class="limit"><strong>2 MiB</strong><span>maximum for any one decoded file</span></div>
+        <div class="limit"><strong>2 MiB total</strong><span>maximum decoded content in either direction</span></div>
+      </div>
+
+      <div class="warning-band">
+        <strong>Trust boundary:</strong> the self-hosted relay administrator can read file payloads while they are retained. Base64 makes binary data transportable; it does not make it secret.
+      </div>
+      <p class="plain-note">A recipient runtime must have a write-capable effective profile to produce returned files.</p>
+    </section>
+
+    <section class="section" id="reliability">
+      <div class="section-heading">
+        <h2>Retry without double-running</h2>
+        <p>
+          Network replies can be lost. The receiver records decisions, claims, and
+          results before sending mutations. One boundary is deliberately irreversible:
+          after local execution may have begun, a restart will not run it again.
+        </p>
+      </div>
+
+      <div class="timeline" role="img" aria-label="Execution safety timeline from durable decision through terminal result">
+        <div class="moment"><div class="moment-dot"></div><strong>Decision staged</strong><p>private decision ID</p></div>
+        <div class="moment"><div class="moment-dot"></div><strong>Accepted</strong><p>exact retry is safe</p></div>
+        <div class="moment"><div class="moment-dot"></div><strong>Claim won</strong><p>one execution claim</p></div>
+        <div class="moment boundary"><div class="moment-dot"></div><strong>runtime_started</strong><p>at-most-once boundary</p></div>
+        <div class="moment"><div class="moment-dot"></div><strong>Result staged</strong><p>payload digest fixed</p></div>
+        <div class="moment terminal"><div class="moment-dot"></div><strong>Terminal</strong><p>completed or failed</p></div>
+      </div>
+
+      <div class="crash-choice">
+        <article class="crash-side safe">
+          <h3>Crash before <code>runtime_started</code></h3>
+          <p>Startup reconciliation may safely finish the claim because the agent process was not durably marked as started.</p>
+        </article>
+        <article class="crash-side stop">
+          <h3>Crash after <code>runtime_started</code></h3>
+          <p>The receiver refuses to spawn again. This avoids duplicate tool effects, but the request may remain running and need manual resolution.</p>
+        </article>
+      </div>
+
+      <p class="plain-note">
+        An operating-system lock prevents two receiver daemons from sharing one local state directory. “Exactly once” cannot be guaranteed at a general agent CLI boundary; Team Relay chooses at-most-once execution after the durable start marker.
+      </p>
+
+      <details>
+        <summary>Who can see live execution progress?</summary>
+        <div>
+          <p>The recipient daemon records bounded local progress such as starting, tool started or finished, and completion. The requester currently sees request lifecycle state and the final result through <code>get_request_status</code>, not a live tool transcript. Raw provider output, tool inputs, secrets, file contents, and private session IDs are deliberately not forwarded through the relay.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="section" id="deployment">
+      <div class="section-heading">
+        <h2>What gets deployed</h2>
+        <p>
+          The shared part is small and cloud-independent. The receiver stays native
+          because the useful context—repositories, memories, MCP configuration, and
+          agent credentials—already lives on the teammate's workstation.
+        </p>
+      </div>
+
+      <div class="deployment-board">
+        <article class="deployment-side">
+          <h3>Shared server</h3>
+          <p>Docker Compose or native binary on any host.</p>
+          <div class="server-unit">
+            <div class="server-box"><strong>team-relay-server</strong>HTTP API, authentication, lifecycle, SSE, admin operations.</div>
+            <div class="server-box"><strong>Valkey or Redis</strong>One Redis-protocol state service with persistence. Not both.</div>
+          </div>
+          <ul class="clean-list">
+            <li>Put an HTTPS reverse proxy in front for network use</li>
+            <li>Keep SSE unbuffered and long-lived</li>
+            <li>Run exactly one relay replica in this preview</li>
+          </ul>
+        </article>
+
+        <div class="deploy-wire" aria-hidden="true"><span>outbound<br>HTTPS + SSE</span></div>
+
+        <article class="deployment-side">
+          <h3>Each teammate's workstation</h3>
+          <p>Native processes with private local state.</p>
+          <div class="native-row">
+            <div class="native-box"><strong>team-relay</strong>One-time setup and enrollment.</div>
+            <div class="native-box"><strong>team-relay-agent</strong>Presence, approval, execution, recovery.</div>
+            <div class="native-box"><strong>team-relay-mcp</strong>Requester tools over local stdio.</div>
+          </div>
+          <ul class="clean-list">
+            <li>No inbound workstation port is exposed to teammates</li>
+            <li>Runtime child receives a filtered environment</li>
+            <li>Receiver and runtime still share the same OS user</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="provider-grid">
+        <article class="provider"><h3>Claude Code</h3><p>Streaming JSON events and private session resume.</p><code>runtime: claude-code</code></article>
+        <article class="provider"><h3>Codex</h3><p>Non-interactive JSON events and private thread resume.</p><code>runtime: codex</code></article>
+        <article class="provider"><h3>Any local runner</h3><p>A fixed recipient-configured executable speaks <strong>NDJSON</strong>: newline-delimited JSON, one complete JSON object per line.</p><code>team-relay-runner/v1</code></article>
+      </div>
+
+      <details>
+        <summary>How administrator onboarding fits</summary>
+        <div>
+          <p>An operator bootstraps one organization, creates short-lived single-use invitations, and privately gives one invitation to each teammate. Enrollment creates the raw device credential on the teammate's machine before contacting the relay; only its hash crosses the network. An administrator can later revoke an invite, device, or entire member.</p>
+          <div class="token-row" aria-label="Credential prefixes">
+            <span class="token">tr_boot_…</span>
+            <span class="token">tr_admin_…</span>
+            <span class="token">tr_inv_…</span>
+            <span class="token">tr_dev_…</span>
+          </div>
+          <p>Revocation commits credential state, removes presence, tombstones the old agent ID, and closes its active SSE connection.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Which MCP tools the requesting agent sees</summary>
+        <div class="token-row">
+          <span class="token">find_teammates</span>
+          <span class="token">request_teammate_help</span>
+          <span class="token">get_request_status</span>
+          <span class="token">continue_teammate_conversation</span>
+          <span class="token">cancel_request</span>
+          <span class="token">download_teammate_file</span>
+        </div>
+      </details>
+
+      <div class="skill-rail" aria-label="Bundled guidance skills">
+        <div class="skill"><strong>Requester skill</strong>Find the exact agent, send a bounded proposal, poll conservatively, and never ask for or infer control over recipient grants.</div>
+        <div class="skill"><strong>Recipient skill</strong>First look for a relevant existing local chat when an authorized search capability is available; otherwise investigate from scratch. A grant changes prompting, never the scope of the approved turn.</div>
+        <div class="skill"><strong>Administrator skill</strong>Bootstrap, invite, rotate, and revoke without exposing secrets or treating administration as authority over private grants.</div>
+      </div>
+      <p class="plain-note">Skills guide agent behavior. They are not a security boundary; authentication, state transitions, payload checks, and adapter policy enforcement must still hold underneath.</p>
+    </section>
+
+    <section class="section" id="proof">
+      <div class="section-heading">
+        <h2>What is real today</h2>
+        <p>
+          This architecture is implemented, not merely a diagram. It is also still a
+          developer preview. The boundary between “proved” and “not yet” matters.
+        </p>
+      </div>
+
+      <div class="proof-grid">
+        <article class="proof proven">
+          <h3>Observed and automated</h3>
+          <p>Evidence from the current implementation and local verification.</p>
+          <ul class="clean-list">
+            <li>Native relay with isolated Docker Valkey</li>
+            <li>Two distinct enrolled member identities</li>
+            <li>Real Claude Code → Codex request completed</li>
+            <li>Real Codex → Claude Code request completed</li>
+            <li>Claude follow-up resumed the private session in the original manual-approval test</li>
+            <li>MCP initialize, tool discovery, directory, status, and follow-up calls</li>
+            <li>Automated tests cover files, denial, idempotency, revocation, and recovery paths</li>
+          </ul>
+        </article>
+
+        <article class="proof preview">
+          <h3>Still a release boundary</h3>
+          <p>Do not infer production readiness from the successful local flow.</p>
+          <ul class="clean-list">
+            <li>No independent security audit</li>
+            <li>No application-level rate or storage quotas</li>
+            <li>One relay replica; SSE fan-out is process-local</li>
+            <li>Runtime shares the receiver daemon's OS identity and may leave a background process</li>
+            <li>No packaged tray notification UI or native service installer</li>
+            <li>No signed binary release, updater, or SBOM</li>
+            <li>Inline file transport only; no object storage</li>
+            <li>Post-start crash can require manual running-state resolution</li>
+          </ul>
+        </article>
+      </div>
+
+      <details>
+        <summary>The shortest possible mental model</summary>
+        <div>
+          <p><strong>Team Relay is a permissioned store-and-forward gateway.</strong> Your agent posts a proposal to shared relay state. Your teammate's receiver notices it and either asks them or matches a private grant they previously chose. The receiver still issues a fresh one-request decision, then their local runtime works under their local policy. The answer or selected deliverables travel back through the relay. Conversation stickiness preserves private runtime context without sharing the provider session ID; it does not expand permission.</p>
+        </div>
+      </details>
+    </section>
+
+    <section class="section" id="glossary">
+      <div class="section-heading">
+        <h2>Small glossary</h2>
+        <p>Terms that are easy to conflate when discussing the system.</p>
+      </div>
+
+      <dl class="glossary">
+        <div class="term"><dt>MCP</dt><dd>The local tool interface the requesting Claude or Codex calls. It provides connectivity, not authority over the recipient.</dd></div>
+        <div class="term"><dt>SSE</dt><dd>Server-Sent Events: one long-lived outbound HTTP response used to notify a receiver of changes.</dd></div>
+        <div class="term"><dt>NDJSON</dt><dd>Newline-delimited JSON: a stream where each line is one complete JSON object. The external runner uses it for input and events.</dd></div>
+        <div class="term"><dt>Conversation affinity</dt><dd>A Team Relay conversation ID maps to a provider session that stays private on the recipient machine.</dd></div>
+        <div class="term"><dt>Allow once</dt><dd>The relay's exact one-request decision. It is created after a prompt or a matching recipient-local grant.</dd></div>
+        <div class="term"><dt>Standing grant</dt><dd>Private, durably revocable receiver state that can skip another human prompt only within its approved resource ceiling. It never widens local runtime policy.</dd></div>
+        <div class="term"><dt>Idempotency</dt><dd>Repeating the same uncertain network mutation returns the same logical outcome instead of creating duplicate work.</dd></div>
+      </dl>
+    </section>
+  </main>
+
+  <footer>
+    Team Relay architecture · self-contained and offline · See also
+    <a href="security-model.md">security model</a>,
+    <a href="runtime-adapters.md">runtime adapters</a>, and
+    <a href="deployment.md">deployment</a>.
+  </footer>
+
+  <script>
+    (() => {
+      const journeySteps = [
+        {
+          kicker: "Step 1 · requester",
+          title: "Find a live teammate agent",
+          copy: "The requester's agent calls <code>find_teammates</code>. The relay returns other members' live, accepting receiver agents. It never returns a target owned by the requester's own member identity.",
+          active: "requester",
+          signals: ["MCP asks the directory", "Authenticates membership", "No action yet"],
+          status: null,
+          note: "Discovery exposes capability and availability metadata, not another person's local credentials or private runtime session."
+        },
+        {
+          kicker: "Step 2 · requester → relay",
+          title: "Post a proposal to one exact agent",
+          copy: "The MCP sends a title, prompt, requested access, optional bounded files, expiry, and a fresh idempotency key. Requested access can only narrow the target's policy.",
+          active: "relay",
+          signals: ["Uploads the proposal", "Validates and stores it", "Still has not executed"],
+          status: "preparing",
+          note: "File upload happens when the request is created, so the requester's own outbound-attachment setting must already allow it."
+        },
+        {
+          kicker: "Step 3 · relay → recipient",
+          title: "Notify, then check local approval state",
+          copy: "The relay emits an SSE notice. The recipient's pending inbox gets a bounded prompt preview, authenticated requester identity, hash, requested workspace modes, and file metadata—never attachment bytes. The receiver then checks for a matching private grant.",
+          active: "recipient",
+          signals: ["Waits for status", "Sends an SSE notice", "Matches grant or prompts"],
+          status: "awaiting_approval",
+          note: "No matching grant means the request remains visible for a human decision. A matching grant can skip that repeated prompt, but execution still has not started."
+        },
+        {
+          kicker: "Step 4 · recipient human",
+          title: "Inspect when the receiver asks",
+          copy: "Without a matching grant, the exact target may fetch the full prompt and attachment metadata through its loopback control interface. Inspecting does not start the runtime and still does not release file bytes.",
+          active: "approval",
+          signals: ["Cannot force approval", "Serves target-only proposal", "Human reviews exact scope"],
+          status: "awaiting_approval",
+          note: "The network protocol never accepts an approval level from requester text. In this developer preview, however, the runtime shares the daemon's OS identity; strong isolation of local approval credentials remains a public-release requirement."
+        },
+        {
+          kicker: "Step 5 · recipient human",
+          title: "Choose how often to be asked—or deny",
+          copy: "The recipient may choose <code>ask_always</code>, <code>conversation_30m</code>, <code>teammate_always</code>, or <code>all_always</code>. It first journals that exact local choice and saves any standing grant, then records a fresh relay <code>allow_once</code> decision for this request. A denial becomes terminal.",
+          active: "approval",
+          signals: ["Sees awaiting status", "Stores local choice", "Binds one request decision"],
+          status: "accepted",
+          note: "The 30-minute clock is fixed, teammate grants bind authenticated member identity, and each standing grant is capped by the approved aliases, modes, attachment count, and decoded bytes."
+        },
+        {
+          kicker: "Step 6 · recipient runtime",
+          title: "Claim once, then run locally",
+          copy: "The receiver wins one execution claim and fetches the gated payload. Before <code>MarkRunning</code>, it recomputes the prompt SHA-256 and compares requester agent/member identity, title, expiry, requested access, and attachment descriptors with the approved notice. Only then does it mark <code>runtime_started</code> and launch the recipient-selected runtime under effective local policy.",
+          active: "recipient",
+          signals: ["Only polls status", "Tracks the winning claim", "Claude / Codex runs locally"],
+          status: "running",
+          note: "The adapters exclude normally configured Team Relay tools inside the delegated run while preserving unrelated local MCPs. Because the child still shares the workstation user's OS identity, a hostile wrapper remains a documented preview limitation."
+        },
+        {
+          kicker: "Step 7 · recipient → relay → requester",
+          title: "Return the answer and selected deliverables",
+          copy: "The receiver stages the exact terminal result and digest before submission. The requester reads the answer through <code>get_request_status</code> and explicitly downloads any returned file.",
+          active: "relay",
+          signals: ["Reads the final status", "Stores terminal result", "Submits answer + files"],
+          status: "completed",
+          note: "Returned material is still untrusted data. Downloads stay under a fixed local directory and never overwrite an existing file."
+        },
+        {
+          kicker: "Step 8 · new turn, same conversation",
+          title: "Resume context, then evaluate approval again",
+          copy: "A follow-up carries the Team Relay <code>conversation_id</code>. The recipient privately maps it to the compatible Claude session or Codex thread. The new request begins at <code>awaiting_approval</code>; the receiver either prompts again or matches a still-valid local grant and creates a fresh one-request decision.",
+          active: "requester",
+          signals: ["Sends a follow-up", "Keeps conversation affinity", "Prompts or matches a grant"],
+          status: "awaiting_approval",
+          note: "Session stickiness and approval scope are separate. Even inside the 30-minute window, a broader workspace, mode, or attachment request prompts again. The private provider session ID and grant never leave the recipient."
+        }
+      ];
+
+      const journeyTabs = Array.from(document.querySelectorAll(".journey-controls [role='tab']"));
+      const panel = document.getElementById("journey-panel");
+      const nodeNames = ["requester", "relay", "recipient"];
+      const statusOrder = ["preparing", "awaiting_approval", "accepted", "running", "completed"];
+
+      function showJourneyStep(index, focusTab) {
+        const step = journeySteps[index];
+        journeyTabs.forEach((tab, tabIndex) => {
+          tab.setAttribute("aria-selected", String(tabIndex === index));
+        });
+        panel.setAttribute("aria-labelledby", journeyTabs[index].id);
+        document.getElementById("journey-kicker").textContent = step.kicker;
+        document.getElementById("journey-title").textContent = step.title;
+        document.getElementById("journey-copy").innerHTML = step.copy;
+        document.getElementById("journey-note").textContent = step.note;
+
+        nodeNames.forEach((name, nodeIndex) => {
+          const node = document.querySelector(`[data-node='${name}']`);
+          const isActive = step.active === name || (step.active === "approval" && name === "recipient");
+          node.classList.toggle("active", isActive);
+          node.dataset.zone = step.active === "approval" && name === "recipient" ? "approval" : name;
+          document.getElementById(`${name}-signal`).textContent = step.signals[nodeIndex];
+        });
+
+        document.querySelectorAll("[data-status]").forEach((chip) => chip.classList.remove("active"));
+        if (step.status) {
+          const current = statusOrder.indexOf(step.status);
+          statusOrder.slice(0, current + 1).forEach((status) => {
+            document.querySelector(`[data-status='${status}']`)?.classList.add("active");
+          });
+        }
+        if (focusTab) journeyTabs[index].focus();
+      }
+
+      journeyTabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => showJourneyStep(index, false));
+        tab.addEventListener("keydown", (event) => {
+          if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+          event.preventDefault();
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          showJourneyStep((index + delta + journeyTabs.length) % journeyTabs.length, true);
+        });
+      });
+
+      const profileTabs = Array.from(document.querySelectorAll(".profile-tabs [role='tab']"));
+      const profilePanels = Array.from(document.querySelectorAll(".profile-panel"));
+
+      function showProfile(index, focusTab) {
+        profileTabs.forEach((tab, tabIndex) => tab.setAttribute("aria-selected", String(tabIndex === index)));
+        profilePanels.forEach((profilePanel, panelIndex) => { profilePanel.hidden = panelIndex !== index; });
+        if (focusTab) profileTabs[index].focus();
+      }
+
+      profileTabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => showProfile(index, false));
+        tab.addEventListener("keydown", (event) => {
+          if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+          event.preventDefault();
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          showProfile((index + delta + profileTabs.length) % profileTabs.length, true);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
