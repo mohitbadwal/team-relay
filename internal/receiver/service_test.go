@@ -1424,6 +1424,12 @@ func TestApprovedAttachmentWorkspaceAndReturnedFileFlow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- service.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("stop receiver service: %v", err)
+		}
+	})
 	select {
 	case <-relay.heartbeat:
 	case <-time.After(2 * time.Second):
@@ -1460,10 +1466,6 @@ func TestApprovedAttachmentWorkspaceAndReturnedFileFlow(t *testing.T) {
 	}
 	if !(positions["decide:allow_once"] < positions["fetch"] && positions["fetch"] < positions["running"] && positions["running"] < positions["artifact:art_input"]) {
 		t.Fatalf("attachment was released before approval/running: %#v", order)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }
 

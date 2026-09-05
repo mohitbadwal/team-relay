@@ -105,7 +105,7 @@ func TestRotationRecoversWithStagedNewCredentialAfterOldIsInvalid(t *testing.T) 
 	}
 	oldToken, _ := auth.NewToken(auth.TokenAdmin)
 	tokenPath := filepath.Join(directory, "admin-token")
-	if err := os.WriteFile(tokenPath, []byte(oldToken+"\n"), 0o600); err != nil {
+	if err := privatefs.WriteNewFile(tokenPath, []byte(oldToken+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var firstRequest map[string]string

@@ -42,7 +42,7 @@ func platformValidatePrivateDirectory(path string, _ os.FileInfo) error {
 	if err != nil {
 		return fmt.Errorf("read directory ACL: %w", err)
 	}
-	return validateCurrentUserOnlyDescriptor(descriptor, true, true)
+	return validateCurrentUserOnlyDescriptor(descriptor, true, true, false)
 }
 
 func platformOpenNewPrivateFile(path string, _ fs.FileMode) (*os.File, error) {
@@ -101,7 +101,7 @@ func validateCurrentUserOnlyRegularFile(path string, requireProtected bool) erro
 	if err != nil {
 		return fmt.Errorf("read file ACL: %w", err)
 	}
-	return validateCurrentUserOnlyDescriptor(descriptor, false, requireProtected)
+	return validateCurrentUserOnlyDescriptor(descriptor, false, requireProtected, !requireProtected)
 }
 
 func platformValidatePrivateFileHandle(file *os.File) error {
@@ -170,16 +170,26 @@ func validatePrivateHandle(handle windows.Handle) error {
 	if err != nil {
 		return err
 	}
-	return validateCurrentUserOnlyDescriptor(descriptor, false, true)
+	return validateCurrentUserOnlyDescriptor(descriptor, false, true, false)
 }
 
-func validateCurrentUserOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, directory, requireProtected bool) error {
+func validateCurrentUserOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, directory, requireProtected, allowTokenOwner bool) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return fmt.Errorf("read current user SID: %w", err)
 	}
 	owner, _, err := descriptor.Owner()
-	if err != nil || owner == nil || !windows.EqualSid(owner, user.User.Sid) {
+	if err != nil || owner == nil {
+		return errors.New("owner is unavailable")
+	}
+	ownerAllowed := windows.EqualSid(owner, user.User.Sid)
+	if !ownerAllowed && allowTokenOwner {
+		ownerAllowed, err = currentTokenOwnerMatches(owner)
+		if err != nil {
+			return fmt.Errorf("read current token owner SID: %w", err)
+		}
+	}
+	if !ownerAllowed {
 		return errors.New("owner is not the current user")
 	}
 	control, _, err := descriptor.Control()
@@ -220,4 +230,36 @@ func validateCurrentUserOnlyDescriptor(descriptor *windows.SECURITY_DESCRIPTOR, 
 		return errors.New("current user does not have full control")
 	}
 	return nil
+}
+
+// Windows assigns an ordinary new object's owner from TokenOwner, which can
+// legitimately differ from TokenUser for an elevated process. Runtime-created
+// result files use the ordinary creation APIs of third-party agent CLIs, so the
+// contained-file validator accepts that exact token-selected owner while still
+// requiring the protected parent and a single full-control ACE for TokenUser.
+func currentTokenOwnerMatches(candidate *windows.SID) (bool, error) {
+	if candidate == nil || !candidate.IsValid() {
+		return false, errors.New("candidate owner SID is unavailable")
+	}
+	type tokenOwnerInfo struct {
+		Owner *windows.SID
+	}
+	token := windows.GetCurrentProcessToken()
+	var size uint32
+	err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &size)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return false, err
+	}
+	if size < uint32(unsafe.Sizeof(tokenOwnerInfo{})) {
+		return false, errors.New("token owner payload is invalid")
+	}
+	payload := make([]byte, size)
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, &payload[0], uint32(len(payload)), &size); err != nil {
+		return false, err
+	}
+	tokenOwner := (*tokenOwnerInfo)(unsafe.Pointer(&payload[0])).Owner
+	if tokenOwner == nil || !tokenOwner.IsValid() {
+		return false, errors.New("token owner SID is unavailable")
+	}
+	return windows.EqualSid(candidate, tokenOwner), nil
 }

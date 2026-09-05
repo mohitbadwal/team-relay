@@ -26,6 +26,9 @@ func TestWindowsPrivateDirectoryACLIsProtectedAndInherited(t *testing.T) {
 	if err := ValidateContainedRegularFile(child); err != nil {
 		t.Fatalf("ordinary child did not inherit a current-user-only ACL: %v", err)
 	}
+	if err := ValidateRegularFile(child); err == nil {
+		t.Fatal("ordinary inherited child was accepted as strict durable state")
+	}
 }
 
 func TestWindowsValidationRejectsAdditionalIdentityAndEnsureDoesNotRewriteDirectory(t *testing.T) {
