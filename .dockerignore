@@ -1,0 +1,13 @@
+.git
+.github
+.env
+bin
+dist
+secrets
+device-token
+*.enrollment-attempt
+*.bootstrap-attempt
+*.rotation-attempt
+.*.setup-*
+.*.private-*
+*.log

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "package": "team-relay-skills",
+  "version": "0.1.0-dev",
+  "skills": [
+    {"id": "requester", "path": "requester/SKILL.md"},
+    {"id": "recipient", "path": "recipient/SKILL.md"},
+    {"id": "admin", "path": "admin/SKILL.md"}
+  ]
+}
