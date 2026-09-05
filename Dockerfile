@@ -14,7 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /out/team-relay-admin ./cmd/team-relay-admin
 
-FROM alpine:3.22 AS certificates
+FROM alpine:3.24 AS certificates
 RUN apk add --no-cache ca-certificates
 
 FROM scratch
