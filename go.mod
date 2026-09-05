@@ -3,7 +3,7 @@ module github.com/mohitbadwal/team-relay
 go 1.24.0
 
 require (
-	github.com/alicebob/miniredis/v2 v2.38.0
+	github.com/alicebob/miniredis/v2 v2.39.0
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/redis/go-redis/v9 v9.7.0
 	golang.org/x/sys v0.33.0
