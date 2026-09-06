@@ -14,8 +14,9 @@ relay_config_key_valid() {
 }
 
 relay_config_validate() {
-  [ -f "$relay_conf_file" ] && [ ! -L "$relay_conf_file" ] || \
+  if [ ! -f "$relay_conf_file" ] || [ -L "$relay_conf_file" ]; then
     relay_config_fail "$relay_conf_file must be a regular file, not a symlink"
+  fi
   if stat -c '%a' "$relay_conf_file" >/dev/null 2>&1; then
     relay_conf_mode=$(stat -c '%a' "$relay_conf_file")
     relay_conf_owner=$(stat -c '%u' "$relay_conf_file")
@@ -23,8 +24,9 @@ relay_config_validate() {
     relay_conf_mode=$(stat -f '%Lp' "$relay_conf_file")
     relay_conf_owner=$(stat -f '%u' "$relay_conf_file")
   fi
-  [ "$relay_conf_owner" = "$(id -u)" ] && [ "$relay_conf_mode" = 600 ] || \
+  if [ "$relay_conf_owner" != "$(id -u)" ] || [ "$relay_conf_mode" != 600 ]; then
     relay_config_fail "config must be owned by the current user with private permissions (chmod 600): $relay_conf_file"
+  fi
   relay_seen_keys=' '
   while IFS= read -r relay_line || [ -n "$relay_line" ]; do
     case "$relay_line" in
