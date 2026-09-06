@@ -127,8 +127,9 @@ append_private_env() {
     )
     return
   fi
-  [ -f "$env_file" ] && [ ! -L "$env_file" ] || \
+  if [ ! -f "$env_file" ] || [ -L "$env_file" ]; then
     fail ".env must be a regular file, not a symlink"
+  fi
   # The leading newline also handles an existing file whose final line has no
   # newline; Compose will simply ignore the resulting blank separator.
   printf '\n%s=%s\n' "$key" "$value" >> "$env_file"
@@ -301,8 +302,9 @@ if [ -d "$profile_dir" ]; then
   saved_organization=$(profile_value organization || true)
   saved_admin_name=$(profile_value admin-name || true)
   saved_admin_email=$(profile_value admin-email || true)
-  [ -n "$saved_organization" ] && [ -n "$saved_admin_name" ] && [ -n "$saved_admin_email" ] || \
+  if [ -z "$saved_organization" ] || [ -z "$saved_admin_name" ] || [ -z "$saved_admin_email" ]; then
     fail "bootstrap recovery profile is incomplete; inspect $profile_dir without deleting any *.bootstrap-attempt file"
+  fi
 
   if [ -n "$organization$admin_name$admin_email" ] && \
      { [ "$organization" != "$saved_organization" ] || \
@@ -315,8 +317,9 @@ if [ -d "$profile_dir" ]; then
   admin_email=$saved_admin_email
   printf 'Reusing the saved exact-retry administrator profile.\n'
 elif [ -n "$organization$admin_name$admin_email" ]; then
-  [ -n "$organization" ] && [ -n "$admin_name" ] && [ -n "$admin_email" ] || \
+  if [ -z "$organization" ] || [ -z "$admin_name" ] || [ -z "$admin_email" ]; then
     fail "set all of TEAM_RELAY_INSTALL_ORGANIZATION, TEAM_RELAY_INSTALL_ADMIN_NAME, and TEAM_RELAY_INSTALL_ADMIN_EMAIL"
+  fi
 elif [ -t 0 ] && [ -t 1 ]; then
   printf '\nBootstrap the first administrator now? [Y/n] '
   IFS= read -r answer
