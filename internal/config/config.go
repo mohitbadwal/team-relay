@@ -28,6 +28,8 @@ type RelayConfig struct {
 }
 
 type ReceiverConfig struct {
+	DisplayName   string `yaml:"display_name,omitempty"`
+	DeviceName    string `yaml:"device_name,omitempty"`
 	Profile       string `yaml:"profile"`
 	MaxConcurrent int    `yaml:"max_concurrent"`
 	RuntimeSecs   int    `yaml:"runtime_seconds"`

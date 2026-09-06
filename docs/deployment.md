@@ -99,7 +99,7 @@ purpose. Never mount a broad home or project directory just to make it writable.
 
 ## Non-Docker
 
-Run `./install-native` first to build all Team Relay commands into `./bin`. The
+Run `./install-native --admin` first to build all Team Relay commands into `./bin`. The
 installer does not claim to provision Redis/Valkey or register a durable OS
 service; those remain explicit operator choices.
 
@@ -151,7 +151,7 @@ project whose existing containers belong to another checkout. Do not copy a
 deployment's `.env` project identity to a different installation. Stop the
 current service before changing server mode or moving its configuration file.
 
-Native mode (`TEAM_RELAY_SERVER_MODE=native`) requires `./install-native` and
+Native mode (`TEAM_RELAY_SERVER_MODE=native`) requires `./install-native --admin` and
 an already-running Redis/Valkey endpoint. Set its URL, bootstrap-token file,
 and server executable in the `.conf`; the command does not generate a token or
 bootstrap an administrator for you. Use the [quickstart](quickstart.md) for

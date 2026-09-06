@@ -20,6 +20,7 @@ import (
 	"github.com/mohitbadwal/team-relay/internal/auth"
 	"github.com/mohitbadwal/team-relay/internal/client"
 	"github.com/mohitbadwal/team-relay/internal/config"
+	"github.com/mohitbadwal/team-relay/internal/desktop"
 	"github.com/mohitbadwal/team-relay/internal/privatefs"
 	"github.com/mohitbadwal/team-relay/internal/protocol"
 	"github.com/mohitbadwal/team-relay/internal/transportpolicy"
@@ -49,7 +50,9 @@ var (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "error:", err)
+		if !errors.Is(err, desktop.ErrReported) {
+			_, _ = fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -59,6 +62,8 @@ func run(arguments []string) error {
 		return usage()
 	}
 	switch arguments[0] {
+	case "app":
+		return desktop.Run(arguments[1:], os.Stdin, os.Stdout)
 	case "setup", "join":
 		return setup(arguments[1:])
 	case "server", "receiver":
@@ -186,7 +191,7 @@ func setup(arguments []string) error {
 	configuration := config.Config{
 		Version:  1,
 		Relay:    config.RelayConfig{URL: strings.TrimRight(*serverURL, "/"), TokenFile: tokenPath},
-		Receiver: config.ReceiverConfig{Profile: "default", MaxConcurrent: 1, RuntimeSecs: 900},
+		Receiver: config.ReceiverConfig{Profile: "default", MaxConcurrent: 1, RuntimeSecs: 900, DisplayName: strings.TrimSpace(*name), DeviceName: strings.TrimSpace(*deviceName)},
 		Profiles: map[string]config.ReceiverProfile{
 			"default": {
 				Runtime: *runtimeID, Executable: *executable, Model: selectedModel, WorkDir: absWorkDir,

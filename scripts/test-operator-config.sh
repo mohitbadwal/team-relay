@@ -443,8 +443,8 @@ done
 : > "$MOCK_DOCKER_LOG"
 
 run_native_install() {
-  sh "$fixture/install-native" --prefix "$install_prefix" </dev/null > "$test_dir/native-install-output"
-  assert_contains "$test_dir/native-install-output" 'Non-interactive build complete; no enrollment was attempted.' 'installer attempted enrollment without a terminal'
+  sh "$fixture/install-native" --admin --prefix "$install_prefix" </dev/null > "$test_dir/native-install-output"
+  assert_contains "$test_dir/native-install-output" 'Administrator tools installed.' 'admin installer entered teammate onboarding'
   [ ! -s "$MOCK_INSTALLED_RUN_LOG" ] || fail 'installer ran a generated command or enrolled a receiver'
   [ ! -s "$MOCK_SERVICE_LOG" ] || fail 'installer attempted native service management'
   [ ! -s "$MOCK_DOCKER_LOG" ] || fail 'native installer attempted Docker management'
@@ -497,6 +497,17 @@ run_helper relay_config_set TEAM_RELAY_RECEIVER_EXECUTABLE "$fixture/operator-ma
 cp "$conf_file" "$test_dir/manual-paths.before"
 run_native_install
 cmp "$conf_file" "$test_dir/manual-paths.before" || fail 'installer replaced manually selected executable paths'
+pass
+
+# The teammate path must not install server/admin commands or enter onboarding
+# when explicitly run headless with no terminal.
+: > "$MOCK_GO_LOG"
+sh "$fixture/install-native" --headless --prefix "$install_prefix" </dev/null > "$test_dir/teammate-install-output"
+assert_contains "$test_dir/teammate-install-output" 'Non-interactive build complete; no enrollment was attempted.' 'headless teammate install attempted enrollment'
+assert_equal "$(grep -c '<build>' "$MOCK_GO_LOG")" 3 'teammate installer should build only the client, connection and MCP'
+if grep -q './cmd/team-relay-server\|./cmd/team-relay-admin' "$MOCK_GO_LOG"; then
+  fail 'teammate installation built server/admin tools'
+fi
 pass
 
 printf 'Operator configuration and command regression tests passed (%s checks).\n' "$checks"

@@ -29,14 +29,16 @@ import (
 )
 
 type options struct {
-	configPath  string
-	stateDir    string
-	controlAddr string
-	displayName string
-	deviceName  string
-	accepting   bool
-	command     string
-	commandArgs []string
+	configPath      string
+	stateDir        string
+	controlAddr     string
+	displayName     string
+	deviceName      string
+	accepting       bool
+	command         string
+	commandArgs     []string
+	displayExplicit bool
+	deviceExplicit  bool
 }
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -86,6 +88,15 @@ func parseOptions(arguments []string) (options, error) {
 	if err := flags.Parse(arguments); err != nil {
 		return options{}, err
 	}
+	displayExplicit, deviceExplicit := os.Getenv("TEAM_RELAY_DISPLAY_NAME") != "", false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "display-name" {
+			displayExplicit = true
+		}
+		if f.Name == "device-name" {
+			deviceExplicit = true
+		}
+	})
 	if flags.NArg() == 0 {
 		return options{}, fmt.Errorf("a command is required")
 	}
@@ -97,14 +108,16 @@ func parseOptions(arguments []string) (options, error) {
 		return options{}, err
 	}
 	return options{
-		configPath:  *configPath,
-		stateDir:    stateAbs,
-		controlAddr: *controlAddr,
-		displayName: strings.TrimSpace(*display),
-		deviceName:  strings.TrimSpace(*device),
-		accepting:   *accepting,
-		command:     flags.Arg(0),
-		commandArgs: flags.Args()[1:],
+		configPath:      *configPath,
+		stateDir:        stateAbs,
+		controlAddr:     *controlAddr,
+		displayName:     strings.TrimSpace(*display),
+		deviceName:      strings.TrimSpace(*device),
+		accepting:       *accepting,
+		command:         flags.Arg(0),
+		commandArgs:     flags.Args()[1:],
+		displayExplicit: displayExplicit,
+		deviceExplicit:  deviceExplicit,
 	}, nil
 }
 
@@ -113,6 +126,12 @@ func runReceiverCommand(opts options) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	if !opts.displayExplicit && config.Receiver.DisplayName != "" {
+		opts.displayName = config.Receiver.DisplayName
+	}
+	if !opts.deviceExplicit && config.Receiver.DeviceName != "" {
+		opts.deviceName = config.Receiver.DeviceName
 	}
 	controller, err := receiver.BuildController(config, filepath.Join(opts.stateDir, "receiver_sessions.json"))
 	if err != nil {

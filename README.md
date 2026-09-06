@@ -16,9 +16,8 @@ repositories, and files used on their machine.
 
 ![Team Relay approval flow](docs/assets/team-relay-approval.gif)
 
-*Design preview of the compact approval flow. The developer preview currently
-offers the same approval scopes through its local CLI/control API; the packaged
-tray UI is not shipped yet.*
+*Illustrated approval flow. The macOS client now includes a native menu-bar app;
+this GIF is still a design illustration, not a recording of the app.*
 
 > **Status:** developer preview. The core protocol has automated tests,
 > but this is not a production release and has not had an independent security
@@ -28,127 +27,134 @@ tray UI is not shipped yet.*
 > the relay has no built-in request or connection rate limiting. These are
 > public-release blockers.
 
-## Install
+## Join an existing team
 
-A normal team uses both entrypoints: install the shared relay once, then install
-the native client on each teammate's computer.
+**Teammates install the client. Only the admin installs the shared server.**
+Your client handles both directions: an MCP in your usual agent sends requests;
+the menu-bar app receives requests and lets you approve the work.
 
-| Where | Entrypoint | What it installs |
-| --- | --- | --- |
-| Each teammate's computer | `./install-native` | Local requester, receiver, administrator, relay, and MCP binaries; optional guided enrollment |
-| One shared relay host | `./install-docker` | Team Relay server, Valkey, and administrator tooling with guided bootstrap |
+### macOS: one setup window, then the menu bar
 
-### Native teammate client
-
-Requires Go 1.24+ and a supported local agent CLI such as Claude Code or Codex.
-The receiver stays native so it can use the teammate's local repositories,
-memories, MCP configuration, and credentials.
+Source preview requirements: macOS 13+, Go 1.24+, Apple Command Line Tools,
+and a signed-in Claude Code or Codex installation.
 
 ```bash
 git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./install-native
 ```
 
-The installer builds into `./bin` and can guide enrollment without putting
-invitation or device credentials in command arguments. It does not silently
-install a background service or broaden agent permissions.
-If this machine will also host the relay without Docker, the same entrypoint
-builds `team-relay-server` and `team-relay-admin`; provide Redis or Valkey and
-use the lifecycle commands below, as described in the [deployment guide](docs/deployment.md).
+The installer opens **Team Relay.app**. There are two short screens:
 
-### Docker relay host
+1. Paste the **relay address and invitation** your admin sent you. Your name
+   is prefilled.
+2. Choose **Claude Code or Codex**, your usual **working folder**, and
+   **read-only or guarded tools**, then click **Connect**.
 
-Requires Docker with Compose and `curl` on the Docker host. No local Go
-installation is needed.
+Model overrides and outbound file sharing are optional settings. Skills are
+**always included**—there is no separate skill-install prompt. Connect registers
+the Team Relay MCP in the selected agent at user scope, installs the requester
+and recipient skills, checks the actual MCP tool handshake and receiving runtime,
+and starts the local connection. Credentials stay in private files, not process
+arguments or the agent's MCP configuration.
+
+If a later step fails, the app keeps the enrollment and offers **Finish setup**;
+you do not need another invitation. It preserves other MCPs, customized skills,
+and existing enrollment. A conflicting `team-relay` entry from a different
+installation is reported, never silently overwritten.
+
+After setup, use **TR** in the menu bar for:
+
+- Start, stop or restart your connection.
+- Compact incoming-request approvals: allow once, allow this conversation for
+  30 minutes, always allow a teammate, or always allow your team.
+- Pending requests, saved-allowance revocation and teammate discovery.
+- Activity/logs, setup checks and integration repair.
+
+Stopping the connection stops receiving work; it does not uninstall the outgoing
+MCP. Quitting the menu-bar app leaves the connection running. Starting the native
+connection registers it for future user logins. The setup checkbox controls
+whether the menu-bar app also opens at login.
+
+The app is built at `bin/Team Relay.app`; reopen it from Finder. This is a
+**source-built preview**, not yet a signed/notarized download or a Windows/Linux
+tray release. Native Windows/Linux binaries and the advanced headless setup
+remain available; they do not yet have this UI. External adapters also use the
+advanced setup for now. Runtime configuration changes after enrollment still
+use `config.yaml`; the app does not yet include a profile editor.
+
+### Send a request from your agent
+
+Start a **new chat** in the Claude Code or Codex client you selected, so it loads
+the newly installed MCP and skills. Tell it:
+
+> Find my available teammates using Team Relay.
+
+Then:
+
+> Ask Suyog's agent to explain how their repository handles authentication.
+> Ask for a short summary and relevant file paths.
+
+Your agent discovers the exact teammate and sends the request through the MCP.
+Their menu-bar app asks for approval. The answer and any returned files come
+back to **your agent chat**. No sender command or separate sender app is needed.
+
+The receiving runtime's tools remain governed by local policy. In particular,
+the current Codex adapter requires guarded tools and disables inherited MCPs
+**inside incoming teammate sessions**. This does not disable the outgoing MCP
+installed in your normal Codex chat. Choose Claude Code when incoming work needs
+supported local MCPs or the strict shell-disabled read-only profile.
+
+## Set up the shared relay — admin only
+
+Run this **once**, on the computer or host that will serve the team.
+
+### Docker
+
+Requires Docker with Compose and `curl`; no local Go installation is needed.
 
 ```bash
 git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./install-docker
 ```
 
-The installer creates private credential files, configures the host UID/GID,
-starts the relay and Valkey, verifies health from the host, and guides the first
-administrator bootstrap. Rerunning it preserves existing credentials. Use an
-HTTPS reverse proxy for normal shared deployments.
+This installs the relay, Valkey and admin tooling, and guides administrator
+bootstrap. Create invitations following the [admin guide](docs/admin.md), then
+send each teammate the relay address and their invitation privately.
+**Do not send teammates server-start commands or administrator credentials.**
 
-To listen on all IPv4 interfaces, run `./install-docker --bind 0.0.0.0`.
-This saves the choice in `team-relay.conf`; use `--bind 127.0.0.1` to return to local-only
-access. Teammates use the host's reachable IP or HTTPS hostname, not `0.0.0.0`.
-For trusted LAN testing, teammates can use `http://192.168.1.4:8080` (replace
-the IP with your host's private IP). HTTP is allowed for literal private IPs,
-but is unencrypted: invitation/device tokens, prompts, and files can be observed
-on the network. Setup warns about this. Public addresses and DNS hostnames
-require HTTPS; restrict exposed ports with a firewall.
+For a trusted LAN test, use `./install-docker --bind 0.0.0.0` and give teammates
+the host's actual private-IP address, such as `http://192.168.1.4:8080`.
+Never give them `0.0.0.0` as a destination. HTTP is unencrypted: tokens, prompts
+and files can be observed on the network. Use HTTPS for normal shared deployments.
 
-The entrypoints run on macOS and Linux, including Windows through WSL2. The Go
-binaries themselves are also built and tested on native Windows; a dedicated
-PowerShell installer is not packaged yet.
+### Without Docker
 
-### Configure and manage your installation
+Run `./install-native --admin` to additionally build the shared server and admin
+commands. Provide Redis or Valkey and follow the [native deployment guide](docs/deployment.md).
+This is an administrator flow, not teammate onboarding.
 
-Both installers create an editable, private `team-relay.conf` in the checkout.
-Old Docker bind/port settings migrate automatically; tokens stay in `secrets/`
-or their existing private files. Change settings, then restart the affected role:
+### Advanced configuration and headless operation
 
-```bash
-./team-relay config                 # prints the file to edit
-./team-relay server start           # shared server (Docker or native)
-./team-relay server status
-./team-relay server logs --follow
-./team-relay server restart         # applies edited config
-./team-relay server stop            # preserves data and credentials
+Both installers preserve an editable, private `team-relay.conf`. Server and
+connection lifecycles are independent internally; the teammate UI hides that
+infrastructure distinction. The underlying start/stop/status/logs commands remain
+available for administrators, automation and troubleshooting in the
+[deployment guide](docs/deployment.md) and [developer quickstart](docs/quickstart.md).
 
-./team-relay receiver start         # your local teammate receiver
-./team-relay receiver status
-./team-relay receiver logs --follow
-./team-relay receiver restart
-./team-relay receiver stop
-```
-
-The server and receiver are managed independently. Native lifecycle commands
-use macOS LaunchAgents or Linux user systemd; native Windows users can still
-run the binaries in the foreground. Installers do not silently start a native
-service. The built `bin/team-relay` command also accepts these lifecycle commands
-with `--config /path/to/team-relay.conf`.
-
-Prefer the expanded or recovery-oriented path? See the
-[quickstart](docs/quickstart.md) and [deployment guide](docs/deployment.md).
+Use `./install-native --headless` for the terminal setup, or `--no-open` to build
+the macOS app without opening it. The source preview still requires its build
+tools; prebuilt signed installers are not published yet.
 
 ## Let your AI agent install it
 
-Copy this prompt into Claude Code, Codex, or another coding agent. It asks before
-making recipient-owned runtime and permission choices.
+Copy this into your coding agent:
 
 ```text
-Set up Team Relay for me from https://github.com/mohitbadwal/team-relay.
-
-Please:
-1. Ask whether this machine is (a) the one shared relay host, (b) a teammate
-   client, or (c) both. Explain that a normal team runs Docker once and the
-   native client on every teammate machine.
-2. Clone or reuse the repository, then read README.md, docs/quickstart.md, and
-   docs/security-model.md before changing anything.
-3. For the shared host, run ./install-docker. For a teammate client, run
-   ./install-native. Use both only if I selected both roles.
-4. Never paste, echo, log, or place an invitation, device, bootstrap, or admin
-   token in process arguments, source control, or an ordinary .env file. Ask me
-   for the path to a private token file when one is needed.
-5. For a teammate client, ask me to choose the runtime, permission profile,
-   working directory, optional model override, and whether the runtime may use
-   MCPs. Keep the agent's normal model when I do not choose an override. Do not
-   choose guarded_write, shell access, broad tools, or MCP inheritance for me.
-6. Enroll with the one-time invitation supplied by my administrator, install
-   the requester and recipient skills at user scope without overwriting an
-   existing skill, run team-relay-agent doctor, and register team-relay-mcp in
-   my selected agent client.
-7. Start the native receiver in the foreground for the first test. Do not call
-   nohup or claim a durable OS service was installed.
-8. Verify health and teammate discovery with distinct identities; do not test
-   by sending a request back to the same agent.
-9. Report exactly what was installed, where credentials were stored, which
-   permission choices I made, and any production step that remains.
-
-Pause for my input whenever an invitation, identity, runtime, permission,
-workspace, model, MCP, or network decision belongs to me. Do not weaken Team
-Relay's security checks just to make setup pass.
+Install the Team Relay teammate client from https://github.com/mohitbadwal/team-relay.
+Read its README and security notes, then run ./install-native.
+On macOS, leave the final setup choices to me in the Team Relay window.
+Do not install or start the shared relay server unless I explicitly ask to host it.
+MCP registration and requester/recipient skills should be included automatically.
+Do not paste credentials into chat, command arguments, logs or source control.
+Preserve my existing integrations and report conflicts rather than overwriting them.
 ```
 
 ## How it works

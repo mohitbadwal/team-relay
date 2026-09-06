@@ -1,32 +1,37 @@
 #!/bin/sh
 
-# Build the native Team Relay commands from this checkout, then optionally walk
-# an interactive user through one safe enrollment. This installer never starts
-# a durable background service on the user's behalf.
+# Install the teammate client. On macOS the native menu-bar app owns onboarding,
+# MCP/skill integration and connection management. Admin tools are opt-in.
 
 set -eu
 
 script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 prefix="$script_dir/bin"
 dry_run=0
+admin=0
+headless=0
+no_open=0
 
 usage() {
   cat <<'EOF'
-Usage: ./install-native [--prefix DIRECTORY] [--dry-run]
+Usage: ./install-native [--prefix DIRECTORY] [--admin] [--headless] [--no-open] [--dry-run]
 
-Build all native Team Relay commands from this checkout. In an interactive
-terminal, the installer then offers guided enrollment and optional user-level
-requester/recipient skills.
+Install the teammate client. On macOS, open Team Relay's setup window and
+menu-bar app. MCP registration and requester/recipient skills are automatic
+when you connect your selected agent. The server is installed only with --admin.
 Creates ./team-relay.conf for service management while keeping any existing
 service settings, receiver enrollment config.yaml, and credentials separate.
 
 Options:
   --prefix DIRECTORY  Install into DIRECTORY (default: ./bin in this checkout)
   --dry-run           Show what would be built without changing files
+  --admin             Also build shared-server/admin tools; skip teammate onboarding
+  --headless          Use the advanced terminal setup instead of the macOS app
+  --no-open           Build the app but do not open it (automation/package builds)
   -h, --help          Show this help
 
 Requirements:
-  - Go 1.24 or newer
+  - Go 1.24 or newer; macOS 13+ and Apple Command Line Tools for the menu-bar app
 
 This command does not install Redis/Valkey or start a relay or receiver service.
 EOF
@@ -48,6 +53,9 @@ while [ "$#" -gt 0 ]; do
       dry_run=1
       shift
       ;;
+    --admin) admin=1; shift ;;
+    --headless) headless=1; shift ;;
+    --no-open) no_open=1; shift ;;
     -h|--help)
       usage
       exit 0
@@ -62,14 +70,15 @@ done
 grep -q '^module github.com/mohitbadwal/team-relay$' "$script_dir/go.mod" || \
   fail "the checkout has an unexpected Go module"
 
-commands='team-relay team-relay-agent team-relay-mcp team-relay-admin team-relay-server'
+commands='team-relay team-relay-agent team-relay-mcp'
+[ "$admin" -eq 0 ] || commands="$commands team-relay-admin team-relay-server"
 
 if [ "$dry_run" -eq 1 ]; then
   printf 'Would build the following commands into %s:\n' "$prefix"
   for command_name in $commands; do
     printf '  %s\n' "$command_name"
   done
-  printf '\nAn interactive run would then offer guided enrollment and skill setup.\n'
+  printf '\nOn macOS, setup opens in the Team Relay menu-bar app (MCP and skills included).\n'
   printf 'Would create ./team-relay.conf if it does not already exist.\n'
   printf 'No Redis/Valkey instance or background service would be installed.\n'
   exit 0
@@ -130,7 +139,7 @@ for command_name in $commands; do
   mv -f "$staging_dir/$command_name$suffix" "$prefix/$command_name$suffix"
 done
 
-printf '\nInstalled 5 native commands in %s\n' "$prefix"
+printf '\nInstalled Team Relay in %s\n' "$prefix"
 
 # This helper parses literal KEY=value settings; the config is never sourced.
 # shellcheck source=scripts/relay-config.sh
@@ -164,15 +173,28 @@ configure_native_executable() {
     printf 'Kept %s=%s; this install also built %s.\n' "$native_key" "$native_selected" "$native_installed"
   fi
 }
-configure_native_executable TEAM_RELAY_SERVER_EXECUTABLE team-relay-server
+[ "$admin" -eq 0 ] || configure_native_executable TEAM_RELAY_SERVER_EXECUTABLE team-relay-server
 configure_native_executable TEAM_RELAY_RECEIVER_EXECUTABLE team-relay-agent
 printf 'Service settings: %s (existing values preserved).\n' "$relay_conf_file"
+
+if [ "$admin" -eq 1 ]; then
+  printf '\nAdministrator tools installed. See docs/deployment.md for native Redis/Valkey and relay setup.\n'
+  exit 0
+fi
+
+if [ "$goos" = darwin ] && [ "$headless" -eq 0 ]; then
+  sh "$script_dir/scripts/build-macos-app.sh" "$prefix" "$relay_conf_file"
+  if [ "$no_open" -eq 0 ]; then
+    open "$prefix/Team Relay.app"
+    printf '\nContinue in the setup window. After connecting, use the TR menu-bar icon.\n'
+  fi
+  exit 0
+fi
 
 show_management_steps() {
   printf 'Start receiver: "%s/team-relay%s" receiver start --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
   printf 'View receiver logs: "%s/team-relay%s" receiver logs --follow --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
-  printf 'Start server: "%s/team-relay%s" server start --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
-  printf 'Use stop, restart, or status in place of start to manage either service.\n'
+  printf 'Use stop, restart, or status in place of start to manage your connection.\n'
 }
 
 show_next_steps() {
@@ -367,40 +389,10 @@ again. Do not attempt a second enrollment with the same invitation.
 EOF
 fi
 
-install_skills_for() {
-  client_name=$1
-  client_root=$2
-  printf 'Install requester and recipient skills for %s at %s? [y/N] ' "$client_name" "$client_root"
-  IFS= read -r skill_answer
-  case "$skill_answer" in
-    y|Y|yes|YES|Yes) ;;
-    *) return ;;
-  esac
-
-  for skill_name in requester recipient; do
-    source_skill="$script_dir/skills/$skill_name/SKILL.md"
-    destination_dir="$client_root/team-relay-$skill_name"
-    destination_skill="$destination_dir/SKILL.md"
-    if [ -e "$destination_skill" ] || [ -L "$destination_dir" ]; then
-      printf '  Kept existing %s (not overwritten).\n' "$destination_skill"
-      continue
-    fi
-    mkdir -p "$destination_dir"
-    cp "$source_skill" "$destination_skill"
-    chmod 0644 "$destination_skill"
-    printf '  Installed %s\n' "$destination_skill"
-  done
-}
-
-if [ -n "${HOME:-}" ]; then
-  if command -v claude >/dev/null 2>&1 || [ -d "$HOME/.claude" ]; then
-    install_skills_for 'Claude Code' "$HOME/.claude/skills"
-  fi
-  if command -v codex >/dev/null 2>&1 || [ -d "$HOME/.codex" ]; then
-    install_skills_for 'Codex' "$HOME/.codex/skills"
-  fi
+if [ "$runtime_id" = external ]; then
+  printf 'External adapter enrollment is saved. See docs/runtime-adapters.md to integrate your custom agent client.\n'
+  show_management_steps
+  exit 0
 fi
-
-printf '\nEnrollment complete. The installer did not start a background service.\n'
-show_management_steps
-printf 'Requester MCP command: %s/team-relay-mcp%s\n' "$prefix" "$suffix"
+printf '\nInstalling MCP and skills, then starting your connection...\n'
+"$prefix/team-relay$suffix" app --service-config "$relay_conf_file" finish
