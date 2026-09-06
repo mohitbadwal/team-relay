@@ -28,7 +28,7 @@ jobs:
           ./install-docker --dry-run
       - name: Check installer shell quality
         if: runner.os == 'Linux'
-        run: shellcheck install-native install-docker
+        run: shellcheck install-native install-docker scripts/test-docker-install.sh
       - run: go test -count=1 ./...
       - run: go vet ./...
       - run: go build ./cmd/...
@@ -52,5 +52,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate Compose file
         run: docker compose config --quiet
-      - name: Build relay and administrator image
-        run: docker build --tag team-relay-ci .
+      - name: Install, bootstrap, and rerun a real isolated Docker stack
+        timeout-minutes: 15
+        run: sh scripts/test-docker-install.sh

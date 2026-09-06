@@ -57,16 +57,22 @@ service manager as described in the [deployment guide](docs/deployment.md).
 
 ### Docker relay host
 
-Requires Docker with Compose. No local Go installation is needed.
+Requires Docker with Compose and `curl` on the Docker host. No local Go
+installation is needed.
 
 ```bash
 git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./install-docker
 ```
 
 The installer creates private credential files, configures the host UID/GID,
-starts the relay and Valkey, waits for health, and guides the first administrator
-bootstrap. Rerunning it preserves existing credentials. Put an HTTPS reverse
-proxy in front before teammates connect over a network.
+starts the relay and Valkey, verifies health from the host, and guides the first
+administrator bootstrap. Rerunning it preserves existing credentials. Put an
+HTTPS reverse proxy in front before teammates connect over a network.
+
+To listen on all IPv4 interfaces, run `./install-docker --bind 0.0.0.0`.
+This saves the choice in `.env`; use `--bind 127.0.0.1` to return to local-only
+access. Teammates use the host's reachable IP or HTTPS hostname, not `0.0.0.0`.
+Restrict the exposed port with a firewall and use TLS for network traffic.
 
 The entrypoints run on macOS and Linux, including Windows through WSL2. The Go
 binaries themselves are also built and tested on native Windows; a dedicated

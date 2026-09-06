@@ -14,19 +14,29 @@ admin_file="$secrets_dir/admin-token"
 profile_dir="$secrets_dir/.bootstrap-profile"
 dry_run=0
 bootstrap_mode=auto
+requested_bind=
 
 usage() {
   cat <<'EOF'
-Usage: ./install-docker [--no-bootstrap] [--dry-run]
+Usage: ./install-docker [--bind ADDRESS] [--no-bootstrap] [--dry-run]
 
 Build and start the shared Team Relay server and bundled Valkey service with
 Docker Compose. On first use, an interactive terminal can also bootstrap the
 administrator without displaying either credential.
 
+Requires Docker Compose and curl on the Docker host. The installer checks
+readiness both inside the container and through the published host port.
+
 Options:
+  --bind ADDRESS  Persist 127.0.0.1 (local only, default) or 0.0.0.0 (all IPv4
+                  interfaces) as TEAM_RELAY_BIND_ADDRESS in .env
   --no-bootstrap  Start the stack but do not bootstrap an administrator
   --dry-run       Show the installation plan without changing files or Docker
   -h, --help      Show this help
+
+To allow network access: ./install-docker --bind 0.0.0.0
+The choice survives reruns. Use TLS and firewall restrictions before sending
+credentials over a network; 0.0.0.0 is a listen address, not a teammate URL.
 
 For unattended administrator bootstrap, provide all three non-secret identity
 values in the environment:
@@ -47,8 +57,21 @@ fail() {
   exit 1
 }
 
+validate_bind() {
+  case "$1" in
+    127.0.0.1|0.0.0.0) ;;
+    *) fail "bind address must be 127.0.0.1 (local only) or 0.0.0.0 (all IPv4 interfaces)" ;;
+  esac
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --bind)
+      [ "$#" -ge 2 ] || fail "--bind requires an address"
+      validate_bind "$2"
+      requested_bind=$2
+      shift 2
+      ;;
     --no-bootstrap)
       bootstrap_mode=skip
       shift
@@ -79,8 +102,11 @@ Would perform these actions in $script_dir:
   2. Persist the current numeric UID/GID in .env without replacing other settings.
   3. Create or reuse private bootstrap material in ./secrets.
   4. Build the relay/admin image and start the relay plus bundled Valkey.
-  5. Wait for the relay health check.
+  5. Verify container health and the published host readiness endpoint.
 EOF
+  if [ -n "$requested_bind" ]; then
+    printf '     Persist host bind address %s in .env.\n' "$requested_bind"
+  fi
   if [ "$bootstrap_mode" = skip ]; then
     printf '  6. Leave administrator bootstrap for later (--no-bootstrap).\n'
   else
@@ -92,6 +118,8 @@ fi
 
 command -v docker >/dev/null 2>&1 || \
   fail "Docker with the Compose plugin is required"
+command -v curl >/dev/null 2>&1 || \
+  fail "curl is required to verify that the published relay is reachable from this host"
 docker compose version >/dev/null 2>&1 || \
   fail "the Docker Compose plugin is unavailable (expected: docker compose)"
 docker info >/dev/null 2>&1 || \
@@ -135,8 +163,24 @@ append_private_env() {
   printf '\n%s=%s\n' "$key" "$value" >> "$env_file"
 }
 
+set_private_bind() {
+  # Replace only this non-secret setting, preserving unrelated deployment
+  # settings. The temporary file stays private and in the same directory.
+  bind_tmp=$(mktemp "$script_dir/.env.bind.XXXXXX") || fail "could not stage the bind setting"
+  if ! sed '/^TEAM_RELAY_BIND_ADDRESS=/d' "$env_file" > "$bind_tmp" || \
+     ! printf '\nTEAM_RELAY_BIND_ADDRESS=%s\n' "$configured_bind" >> "$bind_tmp"; then
+    rm -f "$bind_tmp"
+    fail "could not save the bind setting"
+  fi
+  chmod 0600 "$bind_tmp"
+  mv "$bind_tmp" "$env_file"
+}
+
 configured_uid=$(env_value TEAM_RELAY_UID || true)
 configured_gid=$(env_value TEAM_RELAY_GID || true)
+saved_bind=$(env_value TEAM_RELAY_BIND_ADDRESS || true)
+configured_bind=${requested_bind:-${TEAM_RELAY_BIND_ADDRESS:-${saved_bind:-127.0.0.1}}}
+validate_bind "$configured_bind"
 write_uid=0
 write_gid=0
 
@@ -157,6 +201,9 @@ case "$configured_gid" in
 esac
 [ "$write_uid" -ne 1 ] || append_private_env TEAM_RELAY_UID "$configured_uid"
 [ "$write_gid" -ne 1 ] || append_private_env TEAM_RELAY_GID "$configured_gid"
+if [ "$configured_bind" != "$saved_bind" ]; then
+  set_private_bind
+fi
 chmod 0600 "$env_file" || fail "could not restrict permissions on .env"
 
 # Persisted values are authoritative on a rerun; do not let stale exported
@@ -164,6 +211,12 @@ chmod 0600 "$env_file" || fail "could not restrict permissions on .env"
 TEAM_RELAY_UID=$configured_uid
 TEAM_RELAY_GID=$configured_gid
 export TEAM_RELAY_UID TEAM_RELAY_GID
+TEAM_RELAY_BIND_ADDRESS=$configured_bind
+export TEAM_RELAY_BIND_ADDRESS
+if [ "$configured_bind" = 0.0.0.0 ]; then
+  printf 'Network access enabled: relay port will bind to all IPv4 interfaces.\n'
+  printf 'Use TLS and firewall restrictions before sending credentials over a network.\n'
+fi
 
 if [ -L "$secrets_dir" ]; then
   fail "refusing to use a symlink as the secrets directory"
@@ -253,17 +306,56 @@ until docker compose exec -T relay /team-relay-server healthcheck >/dev/null 2>&
 done
 printf ' ready.\n'
 
-relay_address=$(docker compose port relay 8080 2>/dev/null | tail -n 1 || true)
-relay_address=${relay_address:-127.0.0.1:8080}
+if ! relay_address=$(docker compose port relay 8080); then
+  fail "the relay is healthy inside Docker, but Docker did not report a published port; inspect docker compose ps and the relay networks"
+fi
+case "$relay_address" in
+  127.0.0.1:*|0.0.0.0:*) relay_port=${relay_address#*:} ;;
+  *) fail "Docker did not publish a valid host address for the relay; the relay needs both the frontend and backend networks (see docs/deployment.md)" ;;
+esac
+[ "${relay_address%:*}" = "$configured_bind" ] || fail "Docker published a different bind address than configured"
+case "$relay_port" in
+  ''|*[!0-9]*) fail "Docker reported an invalid relay port" ;;
+esac
+if [ "${#relay_port}" -gt 5 ] || [ "$relay_port" -lt 1 ] || [ "$relay_port" -gt 65535 ]; then
+  fail "Docker reported a relay port outside the valid range"
+fi
+# A wildcard is a listening address, not a destination. Local verification and
+# the operator URL always use loopback, including an all-interfaces deployment.
+relay_local_address="127.0.0.1:$relay_port"
+
+printf 'Checking relay access from this host'
+attempt=0
+until curl --disable --noproxy '*' --fail --silent --show-error \
+  --connect-timeout 2 --max-time 3 --output /dev/null \
+  "http://$relay_local_address/health/ready" 2>/dev/null; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 10 ]; then
+    printf '\n' >&2
+    fail "the relay is healthy inside Docker but http://$relay_local_address/health/ready is unreachable from this host; check port publishing and run the installer on the Docker host"
+  fi
+  printf '.'
+  sleep 1
+done
+printf ' ready.\n'
+
+show_relay_access() {
+  printf '\nTeam Relay is running at http://%s\n' "$relay_local_address"
+  if [ "$configured_bind" = 0.0.0.0 ]; then
+    printf 'Listening on all IPv4 interfaces (0.0.0.0:%s).\n' "$relay_port"
+    printf 'Teammates must use this host\047s reachable IP or HTTPS hostname, not 0.0.0.0.\n'
+  fi
+}
 
 if [ -s "$admin_file" ]; then
   printf 'Administrator credential already exists; leaving it unchanged.\n'
-  printf '\nTeam Relay is running at http://%s\n' "$relay_address"
+  show_relay_access
   printf 'Next: create a teammate invitation with team-relay-admin (see docs/admin.md).\n'
   exit 0
 fi
 
 show_bootstrap_guide() {
+  show_relay_access
   cat <<'EOF'
 
 The relay is running, but it does not have a local administrator credential yet.
@@ -390,6 +482,6 @@ if ! grep -Eq '^tr_admin_[[:xdigit:]]{64}$' "$admin_file" || \
    [ "$(wc -l < "$admin_file" | tr -d ' ')" -ne 1 ]; then
   fail "the generated administrator credential has an invalid format"
 fi
-printf '\nTeam Relay is running at http://%s\n' "$relay_address"
+show_relay_access
 printf 'Administrator credential: %s (kept private; not displayed)\n' "$admin_file"
 printf 'Next: create a teammate invitation with team-relay-admin (see docs/admin.md).\n'

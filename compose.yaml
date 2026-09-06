@@ -32,7 +32,7 @@ services:
     secrets:
       - bootstrap_token
     ports:
-      - 127.0.0.1:${TEAM_RELAY_PORT:-8080}:8080
+      - "${TEAM_RELAY_BIND_ADDRESS:-127.0.0.1}:${TEAM_RELAY_PORT:-8080}:8080"
     depends_on:
       state:
         condition: service_healthy
@@ -49,6 +49,7 @@ services:
       timeout: 3s
       retries: 10
     networks:
+      - frontend
       - backend
 
   # A Docker-only operator can run administrative commands with:
@@ -81,5 +82,8 @@ volumes:
   relay-state:
 
 networks:
+  # Host port publishing needs a non-internal network on the relay. Keep state
+  # and administrator containers exclusively on the private backend.
+  frontend: {}
   backend:
     internal: true

@@ -15,8 +15,44 @@ is a supported alternative; the relay requires one of them, never both.
 - The relay runs as a non-root user with a read-only root filesystem and no
   Linux capabilities.
 - The relay publishes only to `127.0.0.1` by default.
+- Only the relay joins the ordinary `frontend` bridge for host port publishing;
+  it also joins the internal `backend` network shared with Valkey and the admin
+  client. Valkey and admin remain on `backend` only. An internal-only relay can
+  be healthy inside Docker while its host port is unavailable.
 - Bootstrap material is mounted as a Compose secret rather than committed in
   `.env`.
+
+The installer requires host `curl` and verifies `/health/ready` through the
+published loopback address before reporting success. If an older installation
+reported `http://invalid IP:0`, update the checkout and rerun `./install-docker`.
+Compose recreates the relay with its additional network and preserves the state
+volume and administrator credentials.
+
+### Choose who can reach the relay
+
+Local-only is the default. To publish on all IPv4 interfaces:
+
+```bash
+./install-docker --bind 0.0.0.0
+```
+
+The installer saves `TEAM_RELAY_BIND_ADDRESS=0.0.0.0` in `.env`, so subsequent
+installer and `docker compose up` runs keep the setting. Use
+`./install-docker --bind 127.0.0.1` to return to local-only. The supported values
+are `127.0.0.1` and `0.0.0.0`; an explicit `--bind` wins over an environment
+variable, which wins over `.env`. The installer persists the selected value.
+For Compose-only usage, set `TEAM_RELAY_BIND_ADDRESS` in `.env` or the environment.
+Set `TEAM_RELAY_PORT` in `.env` to change the published port (default `8080`).
+
+`0.0.0.0` is a listening address, not a URL to send teammates. Use a reachable
+host IP or DNS name. The readiness check still uses `127.0.0.1` locally; it does
+not prove access from another machine. Publishing to all interfaces may expose
+the service publicly depending on the host's networking. Restrict access with
+firewall rules and put an HTTPS reverse proxy in front before sending tokens
+over the network. Native clients reject non-loopback HTTP by default. This
+option does not publish Valkey or change authentication.
+
+### Container identity and administration
 
 On Linux, set `TEAM_RELAY_UID` and `TEAM_RELAY_GID` in a private `.env` to the
 owner of `secrets/bootstrap-token` (`id -u` and `id -g`). The same identity runs
