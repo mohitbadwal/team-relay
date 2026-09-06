@@ -1,0 +1,356 @@
+#!/bin/sh
+
+# Build the native Team Relay commands from this checkout, then optionally walk
+# an interactive user through one safe enrollment. This installer never starts
+# a durable background service on the user's behalf.
+
+set -eu
+
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+prefix="$script_dir/bin"
+dry_run=0
+
+usage() {
+  cat <<'EOF'
+Usage: ./install-native [--prefix DIRECTORY] [--dry-run]
+
+Build all native Team Relay commands from this checkout. In an interactive
+terminal, the installer then offers guided enrollment and optional user-level
+requester/recipient skills.
+
+Options:
+  --prefix DIRECTORY  Install into DIRECTORY (default: ./bin in this checkout)
+  --dry-run           Show what would be built without changing files
+  -h, --help          Show this help
+
+Requirements:
+  - Go 1.24 or newer
+
+This command does not install Redis/Valkey or start a relay or receiver service.
+EOF
+}
+
+fail() {
+  printf 'install-native: %s\n' "$*" >&2
+  exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prefix)
+      [ "$#" -ge 2 ] || fail "--prefix requires a directory"
+      prefix=$2
+      shift 2
+      ;;
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1 (run ./install-native --help)"
+      ;;
+  esac
+done
+
+[ -f "$script_dir/go.mod" ] || fail "run this entrypoint from a Team Relay checkout"
+grep -q '^module github.com/mohitbadwal/team-relay$' "$script_dir/go.mod" || \
+  fail "the checkout has an unexpected Go module"
+
+commands='team-relay team-relay-agent team-relay-mcp team-relay-admin team-relay-server'
+
+if [ "$dry_run" -eq 1 ]; then
+  printf 'Would build the following commands into %s:\n' "$prefix"
+  for command_name in $commands; do
+    printf '  %s\n' "$command_name"
+  done
+  printf '\nAn interactive run would then offer guided enrollment and skill setup.\n'
+  printf 'No Redis/Valkey instance or background service would be installed.\n'
+  exit 0
+fi
+
+command -v go >/dev/null 2>&1 || \
+  fail "Go 1.24 or newer is required; install Go and retry"
+
+go_version=$(go env GOVERSION 2>/dev/null || true)
+case "$go_version" in
+  go[0-9]*.[0-9]*) ;;
+  *) fail "could not determine the installed Go version (reported: ${go_version:-unknown})" ;;
+esac
+
+version_numbers=${go_version#go}
+go_major=${version_numbers%%.*}
+go_remainder=${version_numbers#*.}
+go_minor=${go_remainder%%[!0-9]*}
+case "$go_major:$go_minor" in
+  *[!0-9:]*|:*) fail "could not parse the installed Go version: $go_version" ;;
+esac
+if [ "$go_major" -lt 1 ] || { [ "$go_major" -eq 1 ] && [ "$go_minor" -lt 24 ]; }; then
+  fail "Go 1.24 or newer is required (found $go_version)"
+fi
+
+mkdir -p "$prefix"
+[ -d "$prefix" ] || fail "install prefix is not a directory: $prefix"
+
+staging_dir=$(mktemp -d "$prefix/.team-relay-install.XXXXXX") || \
+  fail "could not create a staging directory in $prefix"
+cleanup() {
+  rm -rf "$staging_dir"
+}
+trap cleanup EXIT HUP INT TERM
+
+goos=$(go env GOOS 2>/dev/null || true)
+suffix=''
+[ "$goos" = windows ] && suffix='.exe'
+
+printf 'Building Team Relay with %s...\n' "$go_version"
+for command_name in $commands; do
+  printf '  %s\n' "$command_name$suffix"
+  (
+    cd "$script_dir"
+    go build -trimpath -o "$staging_dir/$command_name$suffix" "./cmd/$command_name"
+  )
+  chmod 0755 "$staging_dir/$command_name$suffix"
+done
+
+# Every command is built before any existing installation is replaced. Each
+# final rename stays on the same filesystem, so a rerun never exposes a partly
+# written executable.
+for command_name in $commands; do
+  mv -f "$staging_dir/$command_name$suffix" "$prefix/$command_name$suffix"
+done
+
+printf '\nInstalled 5 native commands in %s\n' "$prefix"
+
+show_next_steps() {
+  printf 'Enroll later: %s/team-relay setup --help\n' "$prefix"
+  printf 'After enrollment, check the runtime: %s/team-relay-agent doctor\n' "$prefix"
+  printf 'Then start the receiver: %s/team-relay-agent run\n' "$prefix"
+  printf 'Requester MCP command: %s/team-relay-mcp\n' "$prefix"
+}
+
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+  printf '\nNon-interactive build complete; no enrollment was attempted.\n'
+  show_next_steps
+  printf '\nThis installer did not install Redis/Valkey or start a background service.\n'
+  exit 0
+fi
+
+printf '\nEnroll this machine with a Team Relay now? [Y/n] '
+IFS= read -r enroll_answer
+case "$enroll_answer" in
+  n|N|no|NO|No)
+    show_next_steps
+    printf '\nThis installer did not install Redis/Valkey or start a background service.\n'
+    exit 0
+    ;;
+esac
+
+printf 'Relay URL [http://127.0.0.1:8080]: '
+IFS= read -r server_url
+server_url=${server_url:-http://127.0.0.1:8080}
+
+printf 'Private invitation file path (the file, not the token): '
+IFS= read -r invite_file
+[ -n "$invite_file" ] || fail "an invitation file path is required"
+[ -f "$invite_file" ] || fail "invitation file does not exist: $invite_file"
+[ ! -L "$invite_file" ] || fail "refusing to read an invitation from a symlink"
+
+default_name=$(id -un 2>/dev/null || true)
+default_name=${default_name:-Team Relay user}
+printf 'Your display name [%s]: ' "$default_name"
+IFS= read -r display_name
+display_name=${display_name:-$default_name}
+
+default_device=$(hostname 2>/dev/null || true)
+default_device=${default_device:-Team Relay device}
+printf 'Device name [%s]: ' "$default_device"
+IFS= read -r device_name
+device_name=${device_name:-$default_device}
+
+cat <<'EOF'
+Runtime:
+  1. Claude Code
+  2. Codex
+  3. External adapter
+EOF
+printf 'Choose runtime [1]: '
+IFS= read -r runtime_choice
+runtime_choice=${runtime_choice:-1}
+external_id=''
+external_name=''
+external_executable=''
+case "$runtime_choice" in
+  1|claude|claude-code)
+    runtime_id=claude-code
+    ;;
+  2|codex)
+    runtime_id=codex
+    ;;
+  3|external)
+    runtime_id=external
+    printf 'Absolute external adapter executable: '
+    IFS= read -r external_executable
+    [ -n "$external_executable" ] || fail "external runtime requires an executable"
+    printf 'Stable external adapter ID [local]: '
+    IFS= read -r external_id
+    external_id=${external_id:-local}
+    printf 'External adapter display name (optional): '
+    IFS= read -r external_name
+    ;;
+  *)
+    fail "runtime must be Claude Code, Codex, or external"
+    ;;
+esac
+
+if [ "$runtime_id" = codex ]; then
+  cat <<'EOF'
+
+Codex cannot run Team Relay's shell-disabled read_only profile and will fail
+closed. To enroll Codex, explicitly type guarded_write. This still applies the
+recipient-owned command guardrails; the installer will not select it for you.
+For strict read-only access, choose Claude Code or a capable external adapter.
+EOF
+  printf 'Permission profile (type guarded_write, or custom): '
+  IFS= read -r permission_profile
+  case "$permission_profile" in
+    guarded_write|custom) ;;
+    read_only|'') fail "Codex read_only is unsupported; guarded_write must be selected explicitly" ;;
+    *) fail "permission must be guarded_write or custom for Codex" ;;
+  esac
+else
+  printf 'Permission profile [read_only] (read_only, guarded_write, custom): '
+  IFS= read -r permission_profile
+  permission_profile=${permission_profile:-read_only}
+  case "$permission_profile" in
+    read_only|guarded_write|custom) ;;
+    *) fail "permission must be read_only, guarded_write, or custom" ;;
+  esac
+fi
+
+allow_shell=0
+if [ "$permission_profile" = custom ]; then
+  printf 'Allow shell use in this custom profile? [y/N] '
+  IFS= read -r shell_answer
+  case "$shell_answer" in
+    y|Y|yes|YES|Yes) allow_shell=1 ;;
+  esac
+  if [ "$runtime_id" = codex ] && [ "$allow_shell" -ne 1 ]; then
+    fail "Codex custom profiles must explicitly allow shell use"
+  fi
+fi
+
+launch_dir=$(pwd)
+printf 'Default working directory [%s]: ' "$launch_dir"
+IFS= read -r work_dir
+work_dir=${work_dir:-$launch_dir}
+[ -d "$work_dir" ] || fail "working directory does not exist: $work_dir"
+
+printf 'Workspace alias for that directory [repo; type none to skip]: '
+IFS= read -r workspace_alias
+workspace_alias=${workspace_alias:-repo}
+case "$workspace_alias" in
+  none|NONE|None) workspace_alias='' ;;
+esac
+
+printf 'Model override [use the runtime default]: '
+IFS= read -r model_override
+
+printf 'Allow this device requester MCP to upload files from configured workspaces? [y/N] '
+IFS= read -r outbound_answer
+outbound_attachments=0
+case "$outbound_answer" in
+  y|Y|yes|YES|Yes) outbound_attachments=1 ;;
+esac
+
+if [ "$runtime_id" = codex ]; then
+  cat <<'EOF'
+Codex cannot currently inherit an exact, secret-safe MCP snapshot, so MCP
+inheritance must remain disabled. The requester MCP is configured separately.
+EOF
+  printf 'Keep recipient MCP inheritance disabled? [Y/n] '
+  IFS= read -r mcp_answer
+  case "$mcp_answer" in
+    n|N|no|NO|No) fail "Codex MCP inheritance cannot be enabled safely by this setup" ;;
+  esac
+  inherit_mcps=false
+else
+  printf 'Let the recipient runtime inherit your local MCPs? [Y/n] '
+  IFS= read -r mcp_answer
+  case "$mcp_answer" in
+    n|N|no|NO|No) inherit_mcps=false ;;
+    *) inherit_mcps=true ;;
+  esac
+fi
+
+set -- "$prefix/team-relay$suffix" setup \
+  --server "$server_url" \
+  --invite-file "$invite_file" \
+  --name "$display_name" \
+  --device-name "$device_name" \
+  --runtime "$runtime_id" \
+  --permission "$permission_profile" \
+  --work-dir "$work_dir" \
+  --inherit-mcps="$inherit_mcps"
+
+[ -z "$model_override" ] || set -- "$@" --model "$model_override"
+[ -z "$workspace_alias" ] || set -- "$@" --workspace "$workspace_alias=$work_dir"
+[ "$allow_shell" -ne 1 ] || set -- "$@" --allow-shell
+[ "$outbound_attachments" -ne 1 ] || set -- "$@" --outbound-attachments
+if [ "$runtime_id" = external ]; then
+  set -- "$@" --executable "$external_executable" --external-id "$external_id"
+  [ -z "$external_name" ] || set -- "$@" --external-name "$external_name"
+fi
+
+printf '\nEnrolling with the private invitation file; its contents will not be displayed...\n'
+TEAM_RELAY_INVITE_TOKEN='' "$@"
+
+printf '\nChecking the selected local runtime...\n'
+if ! "$prefix/team-relay-agent$suffix" doctor; then
+  cat >&2 <<'EOF'
+Enrollment succeeded, but the runtime capability check failed. Your invitation
+has already been consumed; fix the local runtime and run team-relay-agent doctor
+again. Do not attempt a second enrollment with the same invitation.
+EOF
+fi
+
+install_skills_for() {
+  client_name=$1
+  client_root=$2
+  printf 'Install requester and recipient skills for %s at %s? [y/N] ' "$client_name" "$client_root"
+  IFS= read -r skill_answer
+  case "$skill_answer" in
+    y|Y|yes|YES|Yes) ;;
+    *) return ;;
+  esac
+
+  for skill_name in requester recipient; do
+    source_skill="$script_dir/skills/$skill_name/SKILL.md"
+    destination_dir="$client_root/team-relay-$skill_name"
+    destination_skill="$destination_dir/SKILL.md"
+    if [ -e "$destination_skill" ] || [ -L "$destination_dir" ]; then
+      printf '  Kept existing %s (not overwritten).\n' "$destination_skill"
+      continue
+    fi
+    mkdir -p "$destination_dir"
+    cp "$source_skill" "$destination_skill"
+    chmod 0644 "$destination_skill"
+    printf '  Installed %s\n' "$destination_skill"
+  done
+}
+
+if [ -n "${HOME:-}" ]; then
+  if command -v claude >/dev/null 2>&1 || [ -d "$HOME/.claude" ]; then
+    install_skills_for 'Claude Code' "$HOME/.claude/skills"
+  fi
+  if command -v codex >/dev/null 2>&1 || [ -d "$HOME/.codex" ]; then
+    install_skills_for 'Codex' "$HOME/.codex/skills"
+  fi
+fi
+
+printf '\nEnrollment complete. The installer did not start a background service.\n'
+printf 'Start the receiver in the foreground with: %s/team-relay-agent%s run\n' "$prefix" "$suffix"
+printf 'Requester MCP command: %s/team-relay-mcp%s\n' "$prefix" "$suffix"

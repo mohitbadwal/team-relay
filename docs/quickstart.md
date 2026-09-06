@@ -1,5 +1,11 @@
 # Developer quickstart
 
+> For a normal installation, use the two guided entrypoints in the
+> [README](../README.md): `./install-docker` once on the shared relay host and
+> `./install-native` on each teammate machine. This document intentionally
+> expands the underlying commands for local two-identity testing, recovery, and
+> troubleshooting.
+
 This guide starts a loopback-only relay and two separately enrolled local client
 identities for a single-machine developer test. The relay rejects self-targeting,
 so the requester and recipient must never share one device credential or config.

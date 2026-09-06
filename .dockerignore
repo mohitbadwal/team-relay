@@ -3,6 +3,7 @@
 .env
 bin
 dist
+docs/assets
 secrets
 device-token
 *.enrollment-attempt

@@ -1,0 +1,392 @@
+#!/bin/sh
+
+# Install and start the shared Team Relay server stack from this checkout.
+# Credentials are always exchanged through private files, never shell
+# arguments, command output, or .env values.
+
+set -eu
+
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+env_file="$script_dir/.env"
+secrets_dir="$script_dir/secrets"
+bootstrap_file="$secrets_dir/bootstrap-token"
+admin_file="$secrets_dir/admin-token"
+profile_dir="$secrets_dir/.bootstrap-profile"
+dry_run=0
+bootstrap_mode=auto
+
+usage() {
+  cat <<'EOF'
+Usage: ./install-docker [--no-bootstrap] [--dry-run]
+
+Build and start the shared Team Relay server and bundled Valkey service with
+Docker Compose. On first use, an interactive terminal can also bootstrap the
+administrator without displaying either credential.
+
+Options:
+  --no-bootstrap  Start the stack but do not bootstrap an administrator
+  --dry-run       Show the installation plan without changing files or Docker
+  -h, --help      Show this help
+
+For unattended administrator bootstrap, provide all three non-secret identity
+values in the environment:
+
+  TEAM_RELAY_INSTALL_ORGANIZATION='Example Team' \
+  TEAM_RELAY_INSTALL_ADMIN_NAME='Relay Admin' \
+  TEAM_RELAY_INSTALL_ADMIN_EMAIL='admin@example.com' \
+  ./install-docker
+
+The bootstrap and administrator credentials stay in ./secrets with owner-only
+permissions. Existing credentials and exact-retry recovery state are preserved
+on every rerun.
+EOF
+}
+
+fail() {
+  printf 'install-docker: %s\n' "$*" >&2
+  exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-bootstrap)
+      bootstrap_mode=skip
+      shift
+      ;;
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown argument: $1 (run ./install-docker --help)"
+      ;;
+  esac
+done
+
+[ -f "$script_dir/compose.yaml" ] || \
+  fail "run this entrypoint from a Team Relay checkout"
+[ -f "$script_dir/Dockerfile" ] || \
+  fail "the checkout is missing Dockerfile"
+
+if [ "$dry_run" -eq 1 ]; then
+  cat <<EOF
+Would perform these actions in $script_dir:
+  1. Check Docker Compose.
+  2. Persist the current numeric UID/GID in .env without replacing other settings.
+  3. Create or reuse private bootstrap material in ./secrets.
+  4. Build the relay/admin image and start the relay plus bundled Valkey.
+  5. Wait for the relay health check.
+EOF
+  if [ "$bootstrap_mode" = skip ]; then
+    printf '  6. Leave administrator bootstrap for later (--no-bootstrap).\n'
+  else
+    printf '  6. Reuse, prompt for, or safely read administrator identity and bootstrap once.\n'
+  fi
+  printf '\nNo files or Docker resources were changed.\n'
+  exit 0
+fi
+
+command -v docker >/dev/null 2>&1 || \
+  fail "Docker with the Compose plugin is required"
+docker compose version >/dev/null 2>&1 || \
+  fail "the Docker Compose plugin is unavailable (expected: docker compose)"
+docker info >/dev/null 2>&1 || \
+  fail "the Docker daemon is not reachable"
+
+current_uid=$(id -u) || fail "could not determine the current numeric user ID"
+current_gid=$(id -g) || fail "could not determine the current numeric group ID"
+
+if [ -L "$env_file" ]; then
+  fail "refusing to use a symlink as .env"
+fi
+if [ -e "$env_file" ] && [ ! -f "$env_file" ]; then
+  fail ".env must be a regular file"
+fi
+
+env_value() {
+  key=$1
+  # Compose accepts KEY=value lines. The installer deliberately refuses quoted
+  # or computed UID/GID values because they are security-sensitive file owners.
+  sed -n "s/^${key}=//p" "$env_file" 2>/dev/null | tail -n 1
+}
+
+append_private_env() {
+  key=$1
+  value=$2
+  if [ ! -e "$env_file" ]; then
+    (
+      umask 077
+      {
+        printf '# Created by ./install-docker. Keep deployment overrides private.\n'
+        printf '%s=%s\n' "$key" "$value"
+      } > "$env_file"
+    )
+    return
+  fi
+  [ -f "$env_file" ] && [ ! -L "$env_file" ] || \
+    fail ".env must be a regular file, not a symlink"
+  # The leading newline also handles an existing file whose final line has no
+  # newline; Compose will simply ignore the resulting blank separator.
+  printf '\n%s=%s\n' "$key" "$value" >> "$env_file"
+}
+
+configured_uid=$(env_value TEAM_RELAY_UID || true)
+configured_gid=$(env_value TEAM_RELAY_GID || true)
+write_uid=0
+write_gid=0
+
+if [ -z "$configured_uid" ]; then
+  configured_uid=${TEAM_RELAY_UID:-$current_uid}
+  write_uid=1
+fi
+if [ -z "$configured_gid" ]; then
+  configured_gid=${TEAM_RELAY_GID:-$current_gid}
+  write_gid=1
+fi
+
+case "$configured_uid" in
+  ''|*[!0-9]*) fail "TEAM_RELAY_UID in .env must be numeric" ;;
+esac
+case "$configured_gid" in
+  ''|*[!0-9]*) fail "TEAM_RELAY_GID in .env must be numeric" ;;
+esac
+[ "$write_uid" -ne 1 ] || append_private_env TEAM_RELAY_UID "$configured_uid"
+[ "$write_gid" -ne 1 ] || append_private_env TEAM_RELAY_GID "$configured_gid"
+chmod 0600 "$env_file" || fail "could not restrict permissions on .env"
+
+# Persisted values are authoritative on a rerun; do not let stale exported
+# values silently change the identity that reads owner-only credentials.
+TEAM_RELAY_UID=$configured_uid
+TEAM_RELAY_GID=$configured_gid
+export TEAM_RELAY_UID TEAM_RELAY_GID
+
+if [ -L "$secrets_dir" ]; then
+  fail "refusing to use a symlink as the secrets directory"
+fi
+mkdir -p "$secrets_dir"
+[ -d "$secrets_dir" ] || fail "secrets exists but is not a directory"
+chmod 0700 "$secrets_dir"
+
+file_uid() {
+  target=$1
+  if stat -c '%u' "$target" >/dev/null 2>&1; then
+    stat -c '%u' "$target"
+  elif stat -f '%u' "$target" >/dev/null 2>&1; then
+    stat -f '%u' "$target"
+  else
+    return 1
+  fi
+}
+
+check_private_file() {
+  target=$1
+  label=$2
+  [ ! -L "$target" ] || fail "refusing to use a symlink as $label"
+  [ -f "$target" ] || fail "$label must be a regular file"
+  [ -s "$target" ] || fail "$label is empty"
+  chmod 0600 "$target" || fail "could not restrict permissions on $label"
+  owner=$(file_uid "$target") || fail "could not inspect the owner of $label"
+  [ "$owner" = "$configured_uid" ] || \
+    fail "$label is owned by UID $owner but .env configures relay UID $configured_uid"
+}
+
+cd "$script_dir"
+
+printf 'Building the Team Relay container image...\n'
+docker compose build relay admin
+
+if [ -e "$bootstrap_file" ]; then
+  check_private_file "$bootstrap_file" "secrets/bootstrap-token"
+  if ! grep -Eq '^tr_boot_[[:xdigit:]]{64}$' "$bootstrap_file" || \
+     [ "$(wc -l < "$bootstrap_file" | tr -d ' ')" -ne 1 ]; then
+    fail "the existing bootstrap credential has an invalid format"
+  fi
+  printf 'Reusing the existing private bootstrap credential.\n'
+else
+  [ "$configured_uid" = "$current_uid" ] || \
+    fail ".env configures UID $configured_uid, but a new private token would be owned by UID $current_uid"
+
+  bootstrap_tmp=$(mktemp "$secrets_dir/.bootstrap-token.XXXXXX") || \
+    fail "could not create a private bootstrap staging file"
+  chmod 0600 "$bootstrap_tmp"
+  if ! docker compose run --rm --no-deps admin generate-bootstrap-token > "$bootstrap_tmp"; then
+    rm -f "$bootstrap_tmp"
+    fail "could not generate the bootstrap credential"
+  fi
+  if ! grep -Eq '^tr_boot_[[:xdigit:]]{64}$' "$bootstrap_tmp" || \
+     [ "$(wc -l < "$bootstrap_tmp" | tr -d ' ')" -ne 1 ]; then
+    rm -f "$bootstrap_tmp"
+    fail "the administrator image returned an invalid bootstrap credential"
+  fi
+  mv "$bootstrap_tmp" "$bootstrap_file"
+  chmod 0600 "$bootstrap_file"
+  printf 'Created a private bootstrap credential in secrets/bootstrap-token.\n'
+fi
+
+if [ -e "$admin_file" ]; then
+  check_private_file "$admin_file" "secrets/admin-token"
+  if ! grep -Eq '^tr_admin_[[:xdigit:]]{64}$' "$admin_file" || \
+     [ "$(wc -l < "$admin_file" | tr -d ' ')" -ne 1 ]; then
+    fail "the existing administrator credential has an invalid format"
+  fi
+fi
+
+printf 'Starting the relay and bundled Valkey service...\n'
+docker compose up -d state relay
+
+printf 'Waiting for the relay health check'
+attempt=0
+until docker compose exec -T relay /team-relay-server healthcheck >/dev/null 2>&1; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 45 ]; then
+    printf '\n' >&2
+    docker compose ps >&2 || true
+    fail "the relay did not become healthy within 90 seconds"
+  fi
+  printf '.'
+  sleep 2
+done
+printf ' ready.\n'
+
+relay_address=$(docker compose port relay 8080 2>/dev/null | tail -n 1 || true)
+relay_address=${relay_address:-127.0.0.1:8080}
+
+if [ -s "$admin_file" ]; then
+  printf 'Administrator credential already exists; leaving it unchanged.\n'
+  printf '\nTeam Relay is running at http://%s\n' "$relay_address"
+  printf 'Next: create a teammate invitation with team-relay-admin (see docs/admin.md).\n'
+  exit 0
+fi
+
+show_bootstrap_guide() {
+  cat <<'EOF'
+
+The relay is running, but it does not have a local administrator credential yet.
+Run this entrypoint again in an interactive terminal, or provide these
+non-secret identity values without putting either credential in the shell:
+
+  TEAM_RELAY_INSTALL_ORGANIZATION='Example Team' \
+  TEAM_RELAY_INSTALL_ADMIN_NAME='Relay Admin' \
+  TEAM_RELAY_INSTALL_ADMIN_EMAIL='admin@example.com' \
+  ./install-docker
+EOF
+}
+
+if [ "$bootstrap_mode" = skip ]; then
+  show_bootstrap_guide
+  exit 0
+fi
+
+organization=${TEAM_RELAY_INSTALL_ORGANIZATION:-}
+admin_name=${TEAM_RELAY_INSTALL_ADMIN_NAME:-}
+admin_email=${TEAM_RELAY_INSTALL_ADMIN_EMAIL:-}
+
+profile_value() {
+  key=$1
+  target="$profile_dir/$key"
+  [ ! -L "$target" ] || fail "refusing to read a symlink from bootstrap recovery profile"
+  [ -f "$target" ] || return 1
+  [ "$(wc -l < "$target" | tr -d ' ')" -eq 1 ] || \
+    fail "bootstrap recovery profile contains an invalid $key value"
+  # Values are one line by construction and are never evaluated as shell code.
+  sed -n '1p' "$target"
+}
+
+[ ! -L "$profile_dir" ] || fail "refusing to use a symlink as bootstrap recovery profile"
+if [ -d "$profile_dir" ]; then
+  saved_organization=$(profile_value organization || true)
+  saved_admin_name=$(profile_value admin-name || true)
+  saved_admin_email=$(profile_value admin-email || true)
+  [ -n "$saved_organization" ] && [ -n "$saved_admin_name" ] && [ -n "$saved_admin_email" ] || \
+    fail "bootstrap recovery profile is incomplete; inspect $profile_dir without deleting any *.bootstrap-attempt file"
+
+  if [ -n "$organization$admin_name$admin_email" ] && \
+     { [ "$organization" != "$saved_organization" ] || \
+       [ "$admin_name" != "$saved_admin_name" ] || \
+       [ "$admin_email" != "$saved_admin_email" ]; }; then
+    fail "provided administrator identity differs from the saved exact-retry profile"
+  fi
+  organization=$saved_organization
+  admin_name=$saved_admin_name
+  admin_email=$saved_admin_email
+  printf 'Reusing the saved exact-retry administrator profile.\n'
+elif [ -n "$organization$admin_name$admin_email" ]; then
+  [ -n "$organization" ] && [ -n "$admin_name" ] && [ -n "$admin_email" ] || \
+    fail "set all of TEAM_RELAY_INSTALL_ORGANIZATION, TEAM_RELAY_INSTALL_ADMIN_NAME, and TEAM_RELAY_INSTALL_ADMIN_EMAIL"
+elif [ -t 0 ] && [ -t 1 ]; then
+  printf '\nBootstrap the first administrator now? [Y/n] '
+  IFS= read -r answer
+  case "$answer" in
+    n|N|no|NO|No)
+      show_bootstrap_guide
+      exit 0
+      ;;
+  esac
+
+  printf 'Organization name: '
+  IFS= read -r organization
+  printf 'Administrator display name: '
+  IFS= read -r admin_name
+  printf 'Administrator email: '
+  IFS= read -r admin_email
+else
+  show_bootstrap_guide
+  exit 0
+fi
+
+[ -n "$organization" ] || fail "organization name cannot be empty"
+[ -n "$admin_name" ] || fail "administrator display name cannot be empty"
+[ -n "$admin_email" ] || fail "administrator email cannot be empty"
+
+case "$organization$admin_name$admin_email" in
+  *"
+"*) fail "administrator identity values must each fit on one line" ;;
+esac
+
+if [ ! -d "$profile_dir" ]; then
+  mkdir "$profile_dir"
+  chmod 0700 "$profile_dir"
+  for profile_key in organization admin-name admin-email; do
+    case "$profile_key" in
+      organization) profile_data=$organization ;;
+      admin-name) profile_data=$admin_name ;;
+      admin-email) profile_data=$admin_email ;;
+    esac
+    (
+      umask 077
+      printf '%s\n' "$profile_data" > "$profile_dir/$profile_key"
+    )
+  done
+fi
+
+printf 'Bootstrapping the first administrator...\n'
+if ! docker compose run --rm --no-deps \
+  --volume "$secrets_dir:/run/team-relay-admin:rw" \
+  admin bootstrap \
+  --server http://relay:8080 \
+  --token-file /run/team-relay-admin/bootstrap-token \
+  --admin-token-file /run/team-relay-admin/admin-token \
+  --organization "$organization" \
+  --name "$admin_name" \
+  --email "$admin_email"; then
+  cat >&2 <<EOF
+install-docker: administrator bootstrap did not complete.
+The bootstrap credential, recovery sidecar, and exact retry identity remain in:
+  $secrets_dir
+Run ./install-docker again. Do not delete or alter any *.bootstrap-attempt file.
+EOF
+  exit 1
+fi
+
+check_private_file "$admin_file" "secrets/admin-token"
+if ! grep -Eq '^tr_admin_[[:xdigit:]]{64}$' "$admin_file" || \
+   [ "$(wc -l < "$admin_file" | tr -d ' ')" -ne 1 ]; then
+  fail "the generated administrator credential has an invalid format"
+fi
+printf '\nTeam Relay is running at http://%s\n' "$relay_address"
+printf 'Administrator credential: %s (kept private; not displayed)\n' "$admin_file"
+printf 'Next: create a teammate invitation with team-relay-admin (see docs/admin.md).\n'

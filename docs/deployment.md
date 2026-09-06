@@ -2,6 +2,11 @@
 
 ## Docker Compose
 
+For a new single-node relay host, run `./install-docker` from the repository
+root. It performs the private bootstrap-file, UID/GID, Compose startup, health,
+and first-administrator steps below as one guided flow. The details in this
+section remain useful for production review and recovery.
+
 The default stack uses Valkey, a Redis-protocol-compatible state server. Redis
 is a supported alternative; the relay requires one of them, never both.
 
@@ -45,6 +50,10 @@ that exact host directory read-write. The quickstart uses `./secrets` for this
 purpose. Never mount a broad home or project directory just to make it writable.
 
 ## Non-Docker
+
+Run `./install-native` first to build all Team Relay commands into `./bin`. The
+installer does not claim to provision Redis/Valkey or register a durable OS
+service; those remain explicit operator choices.
 
 Run `team-relay-server` with:
 

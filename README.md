@@ -1,17 +1,118 @@
 # Team Relay
 
-Team Relay is a self-hosted, permission-gated way for one local AI agent to ask
-a teammate's local AI agent for help. It transports a proposal across the
-network; the recipient remains in control of whether it runs and what the local
-runtime may access.
+[![Build](https://github.com/mohitbadwal/team-relay/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mohitbadwal/team-relay/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Go 1.24+](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go&logoColor=white)](go.mod)
+[![Platforms](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-5B6573)](docs/quickstart.md)
+[![MCP](https://img.shields.io/badge/MCP-compatible-6B4EFF)](skills/requester/SKILL.md)
+[![Install with your AI agent](https://img.shields.io/badge/Install_with-your_AI_agent-D97757.svg)](#let-your-ai-agent-install-it)
 
-> **Status:** private developer preview. The core protocol has automated tests,
+**Ask your teammate's agent, not just your teammate.**
+
+Team Relay is an open-source, self-hosted, permission-gated way for one local AI
+agent to ask a teammate's local AI agent for help. The recipient sees the
+request, chooses its scope, and keeps control of the runtime, model, tools,
+repositories, and files used on their machine.
+
+![Team Relay approval flow](docs/assets/team-relay-approval.gif)
+
+*Design preview of the compact approval flow. The developer preview currently
+offers the same approval scopes through its local CLI/control API; the packaged
+tray UI is not shipped yet.*
+
+> **Status:** developer preview. The core protocol has automated tests,
 > but this is not a production release and has not had an independent security
 > audit. Do not expose it to untrusted users or the public internet. In
 > particular, recipient runtimes still run as the workstation user and can read
 > that user's Team Relay credentials or leave a background process behind, and
 > the relay has no built-in request or connection rate limiting. These are
 > public-release blockers.
+
+## Install
+
+A normal team uses both entrypoints: install the shared relay once, then install
+the native client on each teammate's computer.
+
+| Where | Entrypoint | What it installs |
+| --- | --- | --- |
+| Each teammate's computer | `./install-native` | Local requester, receiver, administrator, relay, and MCP binaries; optional guided enrollment |
+| One shared relay host | `./install-docker` | Team Relay server, Valkey, and administrator tooling with guided bootstrap |
+
+### Native teammate client
+
+Requires Go 1.24+ and a supported local agent CLI such as Claude Code or Codex.
+The receiver stays native so it can use the teammate's local repositories,
+memories, MCP configuration, and credentials.
+
+```bash
+git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./install-native
+```
+
+The installer builds into `./bin` and can guide enrollment without putting
+invitation or device credentials in command arguments. It does not silently
+install a background service or broaden agent permissions.
+If this machine will also host the relay without Docker, the same entrypoint
+builds `team-relay-server` and `team-relay-admin`; provide Redis or Valkey and a
+service manager as described in the [deployment guide](docs/deployment.md).
+
+### Docker relay host
+
+Requires Docker with Compose. No local Go installation is needed.
+
+```bash
+git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./install-docker
+```
+
+The installer creates private credential files, configures the host UID/GID,
+starts the relay and Valkey, waits for health, and guides the first administrator
+bootstrap. Rerunning it preserves existing credentials. Put an HTTPS reverse
+proxy in front before teammates connect over a network.
+
+The entrypoints run on macOS and Linux, including Windows through WSL2. The Go
+binaries themselves are also built and tested on native Windows; a dedicated
+PowerShell installer is not packaged yet.
+
+Prefer the expanded or recovery-oriented path? See the
+[quickstart](docs/quickstart.md) and [deployment guide](docs/deployment.md).
+
+## Let your AI agent install it
+
+Copy this prompt into Claude Code, Codex, or another coding agent. It asks before
+making recipient-owned runtime and permission choices.
+
+```text
+Set up Team Relay for me from https://github.com/mohitbadwal/team-relay.
+
+Please:
+1. Ask whether this machine is (a) the one shared relay host, (b) a teammate
+   client, or (c) both. Explain that a normal team runs Docker once and the
+   native client on every teammate machine.
+2. Clone or reuse the repository, then read README.md, docs/quickstart.md, and
+   docs/security-model.md before changing anything.
+3. For the shared host, run ./install-docker. For a teammate client, run
+   ./install-native. Use both only if I selected both roles.
+4. Never paste, echo, log, or place an invitation, device, bootstrap, or admin
+   token in process arguments, source control, or an ordinary .env file. Ask me
+   for the path to a private token file when one is needed.
+5. For a teammate client, ask me to choose the runtime, permission profile,
+   working directory, optional model override, and whether the runtime may use
+   MCPs. Keep the agent's normal model when I do not choose an override. Do not
+   choose guarded_write, shell access, broad tools, or MCP inheritance for me.
+6. Enroll with the one-time invitation supplied by my administrator, install
+   the requester and recipient skills at user scope without overwriting an
+   existing skill, run team-relay-agent doctor, and register team-relay-mcp in
+   my selected agent client.
+7. Start the native receiver in the foreground for the first test. Do not call
+   nohup or claim a durable OS service was installed.
+8. Verify health and teammate discovery with distinct identities; do not test
+   by sending a request back to the same agent.
+9. Report exactly what was installed, where credentials were stored, which
+   permission choices I made, and any production step that remains.
+
+Pause for my input whenever an invitation, identity, runtime, permission,
+workspace, model, MCP, or network decision belongs to me. Do not weaken Team
+Relay's security checks just to make setup pass.
+```
 
 ## How it works
 
@@ -141,60 +242,25 @@ the values still come from the receiver daemon's environment and are not stored
 in `config.yaml`. Team Relay authority variables are always removed, even if
 named explicitly.
 
-## Run the relay with Docker Compose
+## Deployment boundary
 
 The Compose stack contains the relay and one state service. Valkey, a
 Redis-protocol-compatible server, is the default; Redis is a supported
-alternative selected through `.env`. Only one is required.
+alternative selected through `.env`. Only one is required. The default
+published port is loopback-only, and a non-loopback deployment requires HTTPS.
 
-```bash
-export TEAM_RELAY_UID="$(id -u)"
-export TEAM_RELAY_GID="$(id -g)"
-install -d -m 700 secrets
-(
-  umask 077
-  docker compose run --rm --no-deps admin \
-    generate-bootstrap-token > secrets/bootstrap-token
-)
-```
+The recipient receiver remains native because it needs the recipient's local
+agent CLI, repositories, memories, MCP configuration, credentials, and approval
+workflow. In the current preview, approval is through the local CLI/control
+endpoint rather than a packaged tray or system-notification UI. While a
+teammate runtime is active, every sensitive loopback control endpoint returns
+HTTP `423 Locked`; only authenticated health remains available.
 
-The one-shot `admin` service uses the same image as the relay, so this path does
-not require Go on the server. The command writes the token directly to
-`secrets/bootstrap-token` with operator-only permissions. Keep the UID and GID
-exports in the shell used for every Compose command so the non-root containers
-can read those private bind-mounted credentials. Then start the stack:
-
-```bash
-docker compose up -d --build
-```
-
-The default published port is loopback-only. See [the quickstart](docs/quickstart.md)
-for bootstrap, invitation, enrollment, receiver, and MCP steps. Put an HTTPS
-reverse proxy in front before accepting traffic from another machine.
-
-## Run without Docker
-
-Build a server binary and point it at any compatible Redis or Valkey endpoint:
-
-```bash
-mkdir -p bin
-go build -o bin/team-relay-server ./cmd/team-relay-server
-REDIS_URL=redis://127.0.0.1:6379/0 \
-TEAM_RELAY_BOOTSTRAP_TOKEN_FILE=/private/path/bootstrap-token \
-TEAM_RELAY_ADDR=127.0.0.1:8080 \
-bin/team-relay-server
-```
-
-Native receivers are used because they need the recipient's local agent CLI,
-repositories, memories, MCP configuration, credentials, and approval workflow.
-In the current preview, approval is through the local CLI/control endpoint
-rather than a packaged tray or system-notification UI. While a teammate runtime
-is active, every sensitive loopback control endpoint returns HTTP `423 Locked`;
-only authenticated health remains available. This is defense in depth, not an
-isolation boundary: the runtime shares the workstation user's OS identity, can
-potentially read Team Relay's own device or approval credentials, and may leave
-a background process behind. Use only on a controlled test machine until
-child-process identity and filesystem isolation are implemented.
+This is defense in depth, not an isolation boundary: the runtime shares the
+workstation user's OS identity, can potentially read Team Relay's own device or
+approval credentials, and may leave a background process behind. Use only on a
+controlled test machine until child-process identity and filesystem isolation
+are implemented.
 
 ## Repository map
 
