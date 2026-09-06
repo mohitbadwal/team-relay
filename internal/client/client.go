@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mohitbadwal/team-relay/internal/protocol"
+	"github.com/mohitbadwal/team-relay/internal/transportpolicy"
 )
 
 const (
@@ -93,16 +93,16 @@ func New(rawURL, token string, httpClient *http.Client) (*Client, error) {
 		return nil, errors.New("device token is required")
 	}
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" {
 		return nil, errors.New("relay URL must be an absolute HTTP or HTTPS URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return nil, errors.New("relay URL must use HTTP or HTTPS")
 	}
-	if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
-		return nil, errors.New("relay URL must use HTTPS unless it is loopback-only")
+	if u.Scheme == "http" && !transportpolicy.PlainHTTPAllowed(u.Hostname()) {
+		return nil, errors.New(transportpolicy.HTTPRequirement)
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(rawURL, "#") {
 		return nil, errors.New("relay URL must not contain credentials, a query, or a fragment")
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
@@ -128,14 +128,6 @@ func New(rawURL, token string, httpClient *http.Client) (*Client, error) {
 		streamHTTP:       &streamHTTP,
 		streamConnectTTL: defaultSSEConnectTimeout,
 	}, nil
-}
-
-func loopbackHost(host string) bool {
-	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func (c *Client) ListAgents(ctx context.Context, query AgentQuery) (*protocol.AgentDirectoryResponse, error) {

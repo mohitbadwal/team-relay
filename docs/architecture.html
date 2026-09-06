@@ -1482,7 +1482,7 @@
       <div class="file-route" aria-label="File transfer route">
         <div class="file-stop"><strong>1. Local alias</strong>Requester selects a file beneath an explicitly configured workspace.</div>
         <div class="file-stop"><strong>2. Safe reader</strong>Rejects traversal, symlinks, special files, sensitive paths, and unsafe names.</div>
-        <div class="file-stop"><strong>3. Encode</strong><code>content_base64</code>, byte size, MIME type, and SHA-256 travel over HTTPS.</div>
+        <div class="file-stop"><strong>3. Encode</strong><code>content_base64</code>, byte size, MIME type, and SHA-256 travel over HTTPS (or unencrypted HTTP for trusted private-IP LAN tests).</div>
         <div class="file-stop"><strong>4. Inspect</strong>Recipient sees the full prompt plus file metadata—not the bytes—before deciding.</div>
         <div class="file-stop"><strong>5. Execute</strong>Only a per-request relay <code>allow_once</code> decision releases attachment bytes into the local sandbox; a standing grant may create that decision without another prompt.</div>
         <div class="file-stop"><strong>6. Return</strong>Finished files from the exact return directory go back through the relay.</div>
@@ -1562,7 +1562,7 @@
             <div class="server-box"><strong>Valkey or Redis</strong>One Redis-protocol state service with persistence. Not both.</div>
           </div>
           <ul class="clean-list">
-            <li>Put an HTTPS reverse proxy in front for network use</li>
+            <li>Use HTTPS for shared deployments; private-IP HTTP is allowed for trusted LAN tests</li>
             <li>Keep SSE unbuffered and long-lived</li>
             <li>Run exactly one relay replica in this preview</li>
           </ul>

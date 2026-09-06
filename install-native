@@ -17,6 +17,8 @@ Usage: ./install-native [--prefix DIRECTORY] [--dry-run]
 Build all native Team Relay commands from this checkout. In an interactive
 terminal, the installer then offers guided enrollment and optional user-level
 requester/recipient skills.
+Creates ./team-relay.conf for service management while keeping any existing
+service settings, receiver enrollment config.yaml, and credentials separate.
 
 Options:
   --prefix DIRECTORY  Install into DIRECTORY (default: ./bin in this checkout)
@@ -68,9 +70,13 @@ if [ "$dry_run" -eq 1 ]; then
     printf '  %s\n' "$command_name"
   done
   printf '\nAn interactive run would then offer guided enrollment and skill setup.\n'
+  printf 'Would create ./team-relay.conf if it does not already exist.\n'
   printf 'No Redis/Valkey instance or background service would be installed.\n'
   exit 0
 fi
+
+[ -f "$script_dir/scripts/relay-config.sh" ] || fail "the checkout is missing scripts/relay-config.sh"
+[ -f "$script_dir/team-relay.conf.example" ] || fail "the checkout is missing team-relay.conf.example"
 
 command -v go >/dev/null 2>&1 || \
   fail "Go 1.24 or newer is required; install Go and retry"
@@ -94,6 +100,7 @@ fi
 
 mkdir -p "$prefix"
 [ -d "$prefix" ] || fail "install prefix is not a directory: $prefix"
+prefix=$(CDPATH='' cd "$prefix" && pwd)
 
 staging_dir=$(mktemp -d "$prefix/.team-relay-install.XXXXXX") || \
   fail "could not create a staging directory in $prefix"
@@ -125,11 +132,54 @@ done
 
 printf '\nInstalled 5 native commands in %s\n' "$prefix"
 
+# This helper parses literal KEY=value settings; the config is never sourced.
+# shellcheck source=scripts/relay-config.sh
+. "$script_dir/scripts/relay-config.sh"
+relay_config_init native
+configure_native_executable() {
+  native_key=$1
+  native_name=$2
+  native_installed="$prefix/$native_name$suffix"
+  native_selected=$(relay_config_get "$native_key" "bin/$native_name")
+  native_update=$relay_config_created
+  if [ "$native_update" -eq 0 ]; then
+    case "$native_selected" in
+      "bin/$native_name"|"bin/$native_name.exe"|"./bin/$native_name"|"./bin/$native_name.exe")
+        native_default="$(dirname "$relay_conf_file")/$native_selected"
+        if [ ! -e "$native_default" ] && [ ! -L "$native_default" ]; then
+          native_update=1
+        fi
+        ;;
+    esac
+  fi
+  if [ "$native_update" -eq 1 ]; then
+    relay_config_set "$native_key" "$native_installed"
+    return
+  fi
+  case "$native_selected" in
+    /*) native_selected_path=$native_selected ;;
+    *) native_selected_path="$(dirname "$relay_conf_file")/${native_selected#./}" ;;
+  esac
+  if [ "$native_selected_path" != "$native_installed" ]; then
+    printf 'Kept %s=%s; this install also built %s.\n' "$native_key" "$native_selected" "$native_installed"
+  fi
+}
+configure_native_executable TEAM_RELAY_SERVER_EXECUTABLE team-relay-server
+configure_native_executable TEAM_RELAY_RECEIVER_EXECUTABLE team-relay-agent
+printf 'Service settings: %s (existing values preserved).\n' "$relay_conf_file"
+
+show_management_steps() {
+  printf 'Start receiver: "%s/team-relay%s" receiver start --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
+  printf 'View receiver logs: "%s/team-relay%s" receiver logs --follow --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
+  printf 'Start server: "%s/team-relay%s" server start --config "%s"\n' "$prefix" "$suffix" "$relay_conf_file"
+  printf 'Use stop, restart, or status in place of start to manage either service.\n'
+}
+
 show_next_steps() {
-  printf 'Enroll later: %s/team-relay setup --help\n' "$prefix"
-  printf 'After enrollment, check the runtime: %s/team-relay-agent doctor\n' "$prefix"
-  printf 'Then start the receiver: %s/team-relay-agent run\n' "$prefix"
-  printf 'Requester MCP command: %s/team-relay-mcp\n' "$prefix"
+  printf 'Enroll later: "%s/team-relay%s" setup --help\n' "$prefix" "$suffix"
+  printf 'After enrollment, check the runtime: "%s/team-relay-agent%s" doctor\n' "$prefix" "$suffix"
+  show_management_steps
+  printf 'Requester MCP command: "%s/team-relay-mcp%s"\n' "$prefix" "$suffix"
 }
 
 if [ ! -t 0 ] || [ ! -t 1 ]; then
@@ -352,5 +402,5 @@ if [ -n "${HOME:-}" ]; then
 fi
 
 printf '\nEnrollment complete. The installer did not start a background service.\n'
-printf 'Start the receiver in the foreground with: %s/team-relay-agent%s run\n' "$prefix" "$suffix"
+show_management_steps
 printf 'Requester MCP command: %s/team-relay-mcp%s\n' "$prefix" "$suffix"

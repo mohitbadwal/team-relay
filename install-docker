@@ -26,17 +26,20 @@ administrator without displaying either credential.
 
 Requires Docker Compose and curl on the Docker host. The installer checks
 readiness both inside the container and through the published host port.
+Editable settings are saved in team-relay.conf; .env retains Docker image/UID
+overrides and credentials remain in separate private files.
 
 Options:
   --bind ADDRESS  Persist 127.0.0.1 (local only, default) or 0.0.0.0 (all IPv4
-                  interfaces) as TEAM_RELAY_BIND_ADDRESS in .env
+                  interfaces) as TEAM_RELAY_BIND_ADDRESS in team-relay.conf
   --no-bootstrap  Start the stack but do not bootstrap an administrator
   --dry-run       Show the installation plan without changing files or Docker
   -h, --help      Show this help
 
 To allow network access: ./install-docker --bind 0.0.0.0
-The choice survives reruns. Use TLS and firewall restrictions before sending
-credentials over a network; 0.0.0.0 is a listen address, not a teammate URL.
+The choice survives reruns. Private-IP HTTP is allowed for trusted LAN tests
+but is unencrypted. Use TLS for normal shared deployments and restrict access
+with a firewall; 0.0.0.0 is a listen address, not a teammate URL.
 
 For unattended administrator bootstrap, provide all three non-secret identity
 values in the environment:
@@ -105,7 +108,7 @@ Would perform these actions in $script_dir:
   5. Verify container health and the published host readiness endpoint.
 EOF
   if [ -n "$requested_bind" ]; then
-    printf '     Persist host bind address %s in .env.\n' "$requested_bind"
+    printf '     Persist host bind address %s in team-relay.conf.\n' "$requested_bind"
   fi
   if [ "$bootstrap_mode" = skip ]; then
     printf '  6. Leave administrator bootstrap for later (--no-bootstrap).\n'
@@ -163,24 +166,25 @@ append_private_env() {
   printf '\n%s=%s\n' "$key" "$value" >> "$env_file"
 }
 
-set_private_bind() {
-  # Replace only this non-secret setting, preserving unrelated deployment
-  # settings. The temporary file stays private and in the same directory.
-  bind_tmp=$(mktemp "$script_dir/.env.bind.XXXXXX") || fail "could not stage the bind setting"
-  if ! sed '/^TEAM_RELAY_BIND_ADDRESS=/d' "$env_file" > "$bind_tmp" || \
-     ! printf '\nTEAM_RELAY_BIND_ADDRESS=%s\n' "$configured_bind" >> "$bind_tmp"; then
-    rm -f "$bind_tmp"
-    fail "could not save the bind setting"
-  fi
-  chmod 0600 "$bind_tmp"
-  mv "$bind_tmp" "$env_file"
-}
+# shellcheck source=scripts/relay-config.sh
+. "$script_dir/scripts/relay-config.sh"
+relay_config_init docker
+[ "$(relay_config_get TEAM_RELAY_SERVER_MODE docker)" = docker ] || \
+  fail "team-relay.conf selects a native server; change TEAM_RELAY_SERVER_MODE to docker before using this installer"
 
 configured_uid=$(env_value TEAM_RELAY_UID || true)
 configured_gid=$(env_value TEAM_RELAY_GID || true)
-saved_bind=$(env_value TEAM_RELAY_BIND_ADDRESS || true)
+saved_bind=$(relay_config_get TEAM_RELAY_BIND_ADDRESS 127.0.0.1)
 configured_bind=${requested_bind:-${TEAM_RELAY_BIND_ADDRESS:-${saved_bind:-127.0.0.1}}}
 validate_bind "$configured_bind"
+saved_port=$(relay_config_get TEAM_RELAY_PORT 8080)
+configured_port=${TEAM_RELAY_PORT:-$saved_port}
+case "$configured_port" in
+  ''|*[!0-9]*) fail "TEAM_RELAY_PORT must be a number from 0 to 65535" ;;
+esac
+if [ "${#configured_port}" -gt 5 ] || [ "$configured_port" -gt 65535 ]; then
+  fail "TEAM_RELAY_PORT must be a number from 0 to 65535"
+fi
 write_uid=0
 write_gid=0
 
@@ -201,8 +205,25 @@ case "$configured_gid" in
 esac
 [ "$write_uid" -ne 1 ] || append_private_env TEAM_RELAY_UID "$configured_uid"
 [ "$write_gid" -ne 1 ] || append_private_env TEAM_RELAY_GID "$configured_gid"
+configured_project=$(env_value COMPOSE_PROJECT_NAME || true)
+if [ -z "$configured_project" ]; then
+  if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+    configured_project=$COMPOSE_PROJECT_NAME
+  elif [ -f "$bootstrap_file" ]; then
+    # Preserve the old default for an existing installation during migration.
+    configured_project=team-relay
+  else
+    # Independent fresh checkouts must not silently share containers or state.
+    project_checksum=$(printf '%s' "$script_dir" | cksum)
+    configured_project="team-relay-${project_checksum%% *}"
+  fi
+  append_private_env COMPOSE_PROJECT_NAME "$configured_project"
+fi
 if [ "$configured_bind" != "$saved_bind" ]; then
-  set_private_bind
+  relay_config_set TEAM_RELAY_BIND_ADDRESS "$configured_bind"
+fi
+if [ "$configured_port" != "$saved_port" ]; then
+  relay_config_set TEAM_RELAY_PORT "$configured_port"
 fi
 chmod 0600 "$env_file" || fail "could not restrict permissions on .env"
 
@@ -211,11 +232,10 @@ chmod 0600 "$env_file" || fail "could not restrict permissions on .env"
 TEAM_RELAY_UID=$configured_uid
 TEAM_RELAY_GID=$configured_gid
 export TEAM_RELAY_UID TEAM_RELAY_GID
-TEAM_RELAY_BIND_ADDRESS=$configured_bind
-export TEAM_RELAY_BIND_ADDRESS
+relay_config_docker_values
 if [ "$configured_bind" = 0.0.0.0 ]; then
   printf 'Network access enabled: relay port will bind to all IPv4 interfaces.\n'
-  printf 'Use TLS and firewall restrictions before sending credentials over a network.\n'
+  printf 'Private-IP HTTP is allowed for trusted LAN tests but is unencrypted; use HTTPS for normal shared deployments.\n'
 fi
 
 if [ -L "$secrets_dir" ]; then
@@ -249,6 +269,9 @@ check_private_file() {
 }
 
 cd "$script_dir"
+
+relay_compose() { docker compose "$@"; }
+relay_assert_docker_project_dir "$script_dir"
 
 printf 'Building the Team Relay container image...\n'
 docker compose build relay admin
@@ -345,6 +368,8 @@ show_relay_access() {
     printf 'Listening on all IPv4 interfaces (0.0.0.0:%s).\n' "$relay_port"
     printf 'Teammates must use this host\047s reachable IP or HTTPS hostname, not 0.0.0.0.\n'
   fi
+  printf 'Configuration: %s\n' "$relay_conf_file"
+  printf 'Manage: ./team-relay server start|stop|restart|status|logs [--follow]\n'
 }
 
 if [ -s "$admin_file" ]; then

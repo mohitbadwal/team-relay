@@ -1,0 +1,18 @@
+# Team Relay settings. Literal KEY=value lines; no shell commands or expansion.
+# Edit this file after installation, then restart the affected service.
+# Tokens stay in separate private files, never in this configuration.
+TEAM_RELAY_SERVER_MODE=docker
+TEAM_RELAY_BIND_ADDRESS=127.0.0.1
+TEAM_RELAY_PORT=8080
+
+# Native server settings (Redis/Valkey must already be running).
+TEAM_RELAY_REDIS_URL=redis://127.0.0.1:6379/0
+TEAM_RELAY_BOOTSTRAP_TOKEN_FILE=secrets/bootstrap-token
+TEAM_RELAY_SERVER_EXECUTABLE=bin/team-relay-server
+
+# Native receiver settings. Empty config/state paths use existing user defaults.
+# Enrollment/runtime/approval settings remain in the receiver's config.yaml.
+TEAM_RELAY_RECEIVER_EXECUTABLE=bin/team-relay-agent
+TEAM_RELAY_RECEIVER_CONFIG=
+TEAM_RELAY_RECEIVER_STATE_DIR=
+TEAM_RELAY_RECEIVER_CONTROL_ADDRESS=127.0.0.1:8787

@@ -153,9 +153,16 @@ teammate's computer.
 
 ## Relay visibility
 
-Transport must use HTTPS outside loopback. The only bundled exception is the
-one-shot Compose administrator service: it explicitly allows the exact `relay`
-hostname on Compose's isolated internal network through
+Transport requires HTTPS for public addresses and DNS hostnames other than
+localhost. HTTP is allowed for loopback and literal private IPv4 (RFC1918) or
+IPv6 unique-local addresses for trusted LAN testing. Setup warns that this
+exposes invitation/device tokens, prompts, and files to network observers;
+private addressing is not encryption or proof of a trusted network. Public,
+unspecified, link-local, multicast, and shared-carrier addresses do not qualify.
+DNS is never resolved to decide whether HTTP is allowed.
+
+The one-shot Compose administrator service also explicitly allows the exact
+`relay` hostname on Compose's isolated internal network through
 `TEAM_RELAY_ALLOW_HTTP_HOST`. Do not set that escape hatch for native clients or
 an externally reachable network. Bearer credentials are stored as hashes.
 Prompt and file payloads are nevertheless readable by the self-hosted relay

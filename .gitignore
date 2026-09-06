@@ -1,5 +1,7 @@
 .DS_Store
 .env
+team-relay.conf
+team-relay.conf.tmp.*
 *.log
 bin/
 dist/

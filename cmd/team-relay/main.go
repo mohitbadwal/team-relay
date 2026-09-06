@@ -22,6 +22,7 @@ import (
 	"github.com/mohitbadwal/team-relay/internal/config"
 	"github.com/mohitbadwal/team-relay/internal/privatefs"
 	"github.com/mohitbadwal/team-relay/internal/protocol"
+	"github.com/mohitbadwal/team-relay/internal/transportpolicy"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,6 +61,8 @@ func run(arguments []string) error {
 	switch arguments[0] {
 	case "setup", "join":
 		return setup(arguments[1:])
+	case "server", "receiver":
+		return lifecycleCommand(arguments[0], arguments[1:])
 	case "version", "--version":
 		fmt.Println(version)
 		return nil
@@ -255,6 +258,7 @@ func setup(arguments []string) error {
 	}
 	// The raw device token and retry identity are durable before this first
 	// network call. Only their hashes cross the server/store boundary.
+	transportpolicy.WarnPrivateLANHTTP(*serverURL, os.Stderr)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	enrollment, err := enrollRelayDevice(ctx, *serverURL, invite, enrollmentRequest)
@@ -366,17 +370,20 @@ func readInvite(path string, stdin bool) (string, error) {
 
 func validateRelayURL(raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
 		return errors.New("server must be an absolute HTTP or HTTPS URL without embedded credentials")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(raw, "#") {
+		return errors.New("server URL must not contain a query or a fragment")
 	}
 	if parsed.Scheme == "https" {
 		return nil
 	}
 	host := parsed.Hostname()
-	if parsed.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+	if parsed.Scheme == "http" && transportpolicy.PlainHTTPAllowed(host) {
 		return nil
 	}
-	return errors.New("server must use HTTPS unless it is loopback-only")
+	return errors.New(transportpolicy.HTTPRequirement)
 }
 
 func writeSecret(path string, payload []byte) error {
@@ -734,5 +741,5 @@ func firstNonEmpty(values ...string) string {
 }
 
 func usage() error {
-	return errors.New("usage: team-relay setup|join [flags] or team-relay version")
+	return errors.New("usage: team-relay setup|join [flags], team-relay server|receiver start|stop|restart|status|logs [--config PATH] [--follow], or team-relay version")
 }

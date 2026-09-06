@@ -36,21 +36,33 @@ Local-only is the default. To publish on all IPv4 interfaces:
 ./install-docker --bind 0.0.0.0
 ```
 
-The installer saves `TEAM_RELAY_BIND_ADDRESS=0.0.0.0` in `.env`, so subsequent
-installer and `docker compose up` runs keep the setting. Use
+The installer saves `TEAM_RELAY_BIND_ADDRESS=0.0.0.0` in `team-relay.conf`, so
+subsequent installer and `./team-relay server start` runs keep the setting. Use
 `./install-docker --bind 127.0.0.1` to return to local-only. The supported values
 are `127.0.0.1` and `0.0.0.0`; an explicit `--bind` wins over an environment
-variable, which wins over `.env`. The installer persists the selected value.
-For Compose-only usage, set `TEAM_RELAY_BIND_ADDRESS` in `.env` or the environment.
-Set `TEAM_RELAY_PORT` in `.env` to change the published port (default `8080`).
+variable, which wins over `team-relay.conf`. The installer persists the selected
+value. Existing `.env` bind/port settings migrate when the config is first
+created. Set `TEAM_RELAY_PORT` in `team-relay.conf` to change the published port
+(default `8080`), then run `./team-relay server restart`. Management commands
+use the file's bind/port values, not stale exported overrides.
+
+Raw Compose does not automatically read `team-relay.conf`. Prefer the operator
+command. For advanced raw usage, specify both files explicitly:
+`docker compose --env-file .env --env-file team-relay.conf up -d state relay`.
 
 `0.0.0.0` is a listening address, not a URL to send teammates. Use a reachable
 host IP or DNS name. The readiness check still uses `127.0.0.1` locally; it does
 not prove access from another machine. Publishing to all interfaces may expose
 the service publicly depending on the host's networking. Restrict access with
-firewall rules and put an HTTPS reverse proxy in front before sending tokens
-over the network. Native clients reject non-loopback HTTP by default. This
-option does not publish Valkey or change authentication.
+firewall rules and use an HTTPS reverse proxy for normal shared deployments.
+For trusted LAN tests, clients accept HTTP to literal private IPv4 addresses
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and IPv6 unique-local addresses
+(`fc00::/7`), as well as loopback/localhost. For example, a teammate can enroll
+against `http://192.168.1.4:8080`. Setup prints an unencrypted-transport warning:
+tokens, prompts, and attachments are readable by network observers. Private IP
+does not mean the network is trustworthy. Public IPs and non-localhost DNS names
+still require HTTPS; DNS is not resolved to bypass that rule. Publishing does
+not expose Valkey or remove authentication.
 
 ### Container identity and administration
 
@@ -101,7 +113,67 @@ Run `team-relay-server` with:
 - `TEAM_RELAY_HEALTH_URL`: optional container healthcheck URL.
 
 Use a service manager such as launchd, systemd, or Windows Service Control and
-store credentials with the platform's secret facility.
+store credentials with the platform's secret facility. The operator commands
+below provide macOS/Linux user-service integration; standalone foreground
+binaries remain available on Windows.
+
+## Configuration and lifecycle commands
+
+The generated `team-relay.conf` is a private, literal `KEY=value` file, with
+full-line `#` comments. It is never sourced as shell code. Do not add shell
+expansion, quoted values, or duplicate keys. Paths are resolved relative to
+the config file; empty receiver config/state paths use existing user defaults.
+Keep mode `0600`. Tokens stay in separate private files referenced by path.
+The receiver's runtime, workspaces, model, and approval policy remain in its
+existing enrollment `config.yaml`; the `.conf` selects which receiver config
+and executable to run.
+
+`./team-relay config` prints the editable file location. Use `--config FILE`
+after any command when managing a different installation.
+
+| Operation | Shared relay | Local receiver |
+| --- | --- | --- |
+| Start | `./team-relay server start` | `./team-relay receiver start` |
+| Stop | `./team-relay server stop` | `./team-relay receiver stop` |
+| Apply config/restart | `./team-relay server restart` | `./team-relay receiver restart` |
+| Inspect status | `./team-relay server status` | `./team-relay receiver status` |
+| Recent logs | `./team-relay server logs` | `./team-relay receiver logs` |
+| Follow logs | `./team-relay server logs --follow` | `./team-relay receiver logs --follow` |
+
+Docker mode (`TEAM_RELAY_SERVER_MODE=docker`) needs no native binary for server
+operations. Start brings up the relay and bundled state service. Stop retains
+containers, persistent volume, and credentials. Restart recreates the relay so
+edited port/bind values take effect; it does not delete state. Redis remains
+private. Docker logs cover the relay; use Compose directly for Valkey logs.
+Fresh Docker installs persist a checkout-specific `COMPOSE_PROJECT_NAME` in
+`.env`; upgrades preserve existing deployments. Commands refuse to manage a
+project whose existing containers belong to another checkout. Do not copy a
+deployment's `.env` project identity to a different installation. Stop the
+current service before changing server mode or moving its configuration file.
+
+Native mode (`TEAM_RELAY_SERVER_MODE=native`) requires `./install-native` and
+an already-running Redis/Valkey endpoint. Set its URL, bootstrap-token file,
+and server executable in the `.conf`; the command does not generate a token or
+bootstrap an administrator for you. Use the [quickstart](quickstart.md) for
+that initial setup. The receiver is always native regardless of server mode.
+It must be enrolled before it can connect.
+Receiver start/restart forwards `HOME`, `PATH`, and only environment variables
+explicitly named in the selected runtime profile's `environment_allowlist`.
+Those values come from the invoking shell and are stored in the private service
+definition; arbitrary shell credentials and all `TEAM_RELAY_*` variables are
+excluded. Restart from a shell containing the allowed variables after changing
+them. Existing subscription/config files remain accessible as before.
+
+Native services use macOS LaunchAgents or Linux `systemctl --user`, scoped by
+role and config path. They never look up and kill arbitrary process IDs. A
+working user service session is required (WSL needs systemd enabled). Native
+Windows lifecycle service registration is not implemented; foreground commands
+remain supported. Installers create config/binaries only; a native service
+starts when explicitly requested. Use restart after editing a running native
+service's config. Starting also enables that scoped service for future user
+logins; stopping disables it while preserving its definition and logs. This
+does not configure system-wide boot or Linux linger. Treat logs as private:
+they can contain request content.
 
 ## TLS and scaling
 

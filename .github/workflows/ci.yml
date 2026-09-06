@@ -23,12 +23,15 @@ jobs:
       - name: Smoke-test installer entrypoints
         shell: bash
         run: |
-          sh -n install-native install-docker
+          sh -n install-native install-docker team-relay scripts/relay-config.sh
           ./install-native --dry-run
           ./install-docker --dry-run
       - name: Check installer shell quality
         if: runner.os == 'Linux'
-        run: shellcheck install-native install-docker scripts/test-docker-install.sh
+        run: shellcheck -x install-native install-docker team-relay scripts/*.sh
+      - name: Test operator configuration and command routing
+        if: runner.os == 'Linux'
+        run: sh scripts/test-operator-config.sh
       - run: go test -count=1 ./...
       - run: go vet ./...
       - run: go build ./cmd/...

@@ -1,0 +1,131 @@
+#!/bin/sh
+# Checkout-local operator command. Docker hosts need no native Go installation.
+set -eu
+
+script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+# shellcheck source=scripts/relay-config.sh
+. "$script_dir/scripts/relay-config.sh"
+relay_conf_file="$script_dir/team-relay.conf"
+
+usage() {
+  cat <<'EOF'
+Usage: ./team-relay server|receiver start|stop|restart|status|logs [--config FILE] [--follow]
+       ./team-relay config [--config FILE]
+
+Edit team-relay.conf, then restart the affected service to apply changes.
+Server uses Docker or a native user service according to its configuration.
+Receiver always uses a native user service; run ./install-native first.
+Stop preserves credentials, containers, and stored data. Logs shows the latest
+100 lines; add --follow to stream. Native services support macOS and Linux.
+EOF
+}
+
+case "${1:-}" in
+  ''|-h|--help|help) usage; exit 0 ;;
+  server|receiver) relay_role=$1; shift; relay_action=${1:-}; [ "$#" -eq 0 ] || shift ;;
+  config) relay_role=config; relay_action=config; shift ;;
+  *) usage >&2; exit 1 ;;
+esac
+relay_follow=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --config)
+      [ "$#" -ge 2 ] || relay_config_fail "--config requires a path"
+      relay_conf_file=$2; shift 2 ;;
+    --follow) relay_follow=1; shift ;;
+    *) relay_config_fail "unknown option: $1" ;;
+  esac
+done
+case "$relay_action" in
+  start|stop|restart|status|logs) ;;
+  config) [ "$relay_role" = config ] || relay_config_fail "config is a top-level command" ;;
+  *) relay_config_fail "choose start, stop, restart, status, or logs" ;;
+esac
+if [ "$relay_follow" -eq 1 ] && [ "$relay_action" != logs ]; then
+  relay_config_fail "--follow is only supported for logs"
+fi
+relay_config_validate
+relay_conf_dir=$(CDPATH='' cd "$(dirname "$relay_conf_file")" && pwd)
+relay_conf_file="$relay_conf_dir/$(basename "$relay_conf_file")"
+if [ "$relay_role" = config ]; then
+  printf 'Edit %s, then run ./team-relay server restart or ./team-relay receiver restart.\n' "$relay_conf_file"
+  exit 0
+fi
+
+relay_mode=$(relay_config_get TEAM_RELAY_SERVER_MODE docker)
+case "$relay_mode" in
+  docker|native) ;;
+  *) relay_config_fail "TEAM_RELAY_SERVER_MODE must be docker or native" ;;
+esac
+if [ "$relay_role" = receiver ] || [ "$relay_mode" = native ]; then
+  if [ "$relay_role" = receiver ]; then
+    relay_executable=$(relay_config_get TEAM_RELAY_RECEIVER_EXECUTABLE bin/team-relay-agent)
+  else
+    relay_executable=$(relay_config_get TEAM_RELAY_SERVER_EXECUTABLE bin/team-relay-server)
+  fi
+  case "$relay_executable" in
+    /*) ;;
+    *) relay_executable="$relay_conf_dir/$relay_executable" ;;
+  esac
+  relay_cli="$(dirname "$relay_executable")/team-relay"
+  [ -x "$relay_cli" ] || relay_config_fail "native commands are missing; run ./install-native first"
+  set -- "$relay_role" "$relay_action" --config "$relay_conf_file"
+  if [ "$relay_follow" -eq 1 ]; then set -- "$@" --follow; fi
+  exec "$relay_cli" "$@"
+fi
+
+command -v docker >/dev/null 2>&1 || relay_config_fail "Docker Compose is required"
+[ -f "$relay_conf_dir/compose.yaml" ] || relay_config_fail "compose.yaml must be beside the .conf file"
+case "$relay_action" in
+  start|restart) relay_config_docker_values ;;
+  *)
+    # Inspection/stopping targets the Compose project, not a port. Allow these
+    # recovery commands even when the operator has just mistyped bind/port.
+    TEAM_RELAY_BIND_ADDRESS=127.0.0.1
+    TEAM_RELAY_PORT=8080
+    export TEAM_RELAY_BIND_ADDRESS TEAM_RELAY_PORT ;;
+esac
+relay_compose() {
+  docker compose --project-directory "$relay_conf_dir" -f "$relay_conf_dir/compose.yaml" "$@"
+}
+relay_assert_docker_project_dir "$relay_conf_dir"
+relay_ready() {
+  command -v curl >/dev/null 2>&1 || relay_config_fail "curl is required for host readiness"
+  relay_address=$(relay_compose port relay 8080) || relay_config_fail "Docker did not report a published port"
+  case "$relay_address" in
+    "$TEAM_RELAY_BIND_ADDRESS":*) relay_port=${relay_address#*:} ;;
+    *) relay_config_fail "Docker did not publish the configured bind address" ;;
+  esac
+  case "$relay_port" in
+    ''|*[!0-9]*) relay_config_fail "Docker reported an invalid published port" ;;
+  esac
+  if [ "${#relay_port}" -gt 5 ] || [ "$relay_port" -lt 1 ] || [ "$relay_port" -gt 65535 ]; then
+    relay_config_fail "Docker reported an invalid published port"
+  fi
+  relay_attempt=0
+  until curl --disable --noproxy '*' --fail --silent --show-error --output /dev/null \
+    --connect-timeout 2 --max-time 3 "http://127.0.0.1:$relay_port/health/ready" 2>/dev/null; do
+    relay_attempt=$((relay_attempt + 1))
+    [ "$relay_attempt" -lt 15 ] || relay_config_fail "server started but is not ready; check ./team-relay server logs"
+    sleep 1
+  done
+  printf 'Server ready locally at http://127.0.0.1:%s (listening on %s:%s).\n' "$relay_port" "$TEAM_RELAY_BIND_ADDRESS" "$relay_port"
+}
+case "$relay_action" in
+  start)
+    relay_compose up -d state relay
+    relay_ready ;;
+  restart)
+    # Compose restart alone does not apply edited bind/port settings.
+    relay_compose up -d state
+    relay_compose up -d --no-deps --force-recreate relay
+    relay_ready ;;
+  stop) relay_compose stop relay state ;;
+  status) relay_compose ps --all ;;
+  logs)
+    if [ "$relay_follow" -eq 1 ]; then
+      relay_compose logs --tail 100 --follow relay
+    else
+      relay_compose logs --tail 100 relay
+    fi ;;
+esac

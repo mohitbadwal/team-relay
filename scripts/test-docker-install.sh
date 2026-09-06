@@ -40,7 +40,15 @@ fail() {
 }
 
 compose() {
-  docker compose --project-name "$project" --project-directory "$work_dir" "$@"
+  (
+    if [ -f "$work_dir/team-relay.conf" ]; then
+      # shellcheck source=scripts/relay-config.sh
+      . "$work_dir/scripts/relay-config.sh"
+      relay_conf_file="$work_dir/team-relay.conf"
+      relay_config_docker_values
+    fi
+    docker compose --project-name "$project" --project-directory "$work_dir" "$@"
+  )
 }
 
 # Refuse even an unlikely collision before taking ownership of any resources.
@@ -102,6 +110,7 @@ assert_private() {
 
 assert_credentials() {
   assert_private .env 600
+  assert_private team-relay.conf 600
   assert_private secrets 700
   assert_private secrets/.bootstrap-profile 700
   for credential in bootstrap-token admin-token; do
@@ -205,6 +214,26 @@ printf 'Checking that a plain rerun preserves the selected binding.\n'
 assert_rerun_state 0.0.0.0
 
 printf 'Returning the existing installation to loopback-only binding.\n'
-./install-docker --bind 127.0.0.1 </dev/null
+TEAM_RELAY_BIND_ADDRESS=0.0.0.0 ./install-docker --bind 127.0.0.1 </dev/null
 assert_rerun_state 127.0.0.1
-printf 'Docker installation passed: host readiness, configurable bindings, private credentials, network boundaries, and persistent state after recreation.\n'
+
+printf 'Stopping and starting through the operator command without losing state.\n'
+./team-relay server stop
+[ -z "$(compose ps --status running -q)" ] || fail "operator stop left a running service"
+./team-relay server status > "$test_dir/stopped-status"
+./team-relay server start
+assert_rerun_state 127.0.0.1
+./team-relay server logs > "$test_dir/relay-logs"
+[ -s "$test_dir/relay-logs" ] || fail "operator logs returned no output"
+
+printf 'Applying an edited .conf through the operator restart command.\n'
+(
+  # shellcheck source=scripts/relay-config.sh
+  . ./scripts/relay-config.sh
+  relay_conf_file="$work_dir/team-relay.conf"
+  relay_config_set TEAM_RELAY_BIND_ADDRESS 0.0.0.0
+)
+./team-relay server restart
+assert_rerun_state 0.0.0.0
+./team-relay config > "$test_dir/config-location"
+printf 'Docker installation passed: host readiness, editable config, lifecycle commands, private credentials, network boundaries, and persistent state.\n'

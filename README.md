@@ -52,8 +52,8 @@ The installer builds into `./bin` and can guide enrollment without putting
 invitation or device credentials in command arguments. It does not silently
 install a background service or broaden agent permissions.
 If this machine will also host the relay without Docker, the same entrypoint
-builds `team-relay-server` and `team-relay-admin`; provide Redis or Valkey and a
-service manager as described in the [deployment guide](docs/deployment.md).
+builds `team-relay-server` and `team-relay-admin`; provide Redis or Valkey and
+use the lifecycle commands below, as described in the [deployment guide](docs/deployment.md).
 
 ### Docker relay host
 
@@ -66,17 +66,48 @@ git clone https://github.com/mohitbadwal/team-relay.git && cd team-relay && ./in
 
 The installer creates private credential files, configures the host UID/GID,
 starts the relay and Valkey, verifies health from the host, and guides the first
-administrator bootstrap. Rerunning it preserves existing credentials. Put an
-HTTPS reverse proxy in front before teammates connect over a network.
+administrator bootstrap. Rerunning it preserves existing credentials. Use an
+HTTPS reverse proxy for normal shared deployments.
 
 To listen on all IPv4 interfaces, run `./install-docker --bind 0.0.0.0`.
-This saves the choice in `.env`; use `--bind 127.0.0.1` to return to local-only
+This saves the choice in `team-relay.conf`; use `--bind 127.0.0.1` to return to local-only
 access. Teammates use the host's reachable IP or HTTPS hostname, not `0.0.0.0`.
-Restrict the exposed port with a firewall and use TLS for network traffic.
+For trusted LAN testing, teammates can use `http://192.168.1.4:8080` (replace
+the IP with your host's private IP). HTTP is allowed for literal private IPs,
+but is unencrypted: invitation/device tokens, prompts, and files can be observed
+on the network. Setup warns about this. Public addresses and DNS hostnames
+require HTTPS; restrict exposed ports with a firewall.
 
 The entrypoints run on macOS and Linux, including Windows through WSL2. The Go
 binaries themselves are also built and tested on native Windows; a dedicated
 PowerShell installer is not packaged yet.
+
+### Configure and manage your installation
+
+Both installers create an editable, private `team-relay.conf` in the checkout.
+Old Docker bind/port settings migrate automatically; tokens stay in `secrets/`
+or their existing private files. Change settings, then restart the affected role:
+
+```bash
+./team-relay config                 # prints the file to edit
+./team-relay server start           # shared server (Docker or native)
+./team-relay server status
+./team-relay server logs --follow
+./team-relay server restart         # applies edited config
+./team-relay server stop            # preserves data and credentials
+
+./team-relay receiver start         # your local teammate receiver
+./team-relay receiver status
+./team-relay receiver logs --follow
+./team-relay receiver restart
+./team-relay receiver stop
+```
+
+The server and receiver are managed independently. Native lifecycle commands
+use macOS LaunchAgents or Linux user systemd; native Windows users can still
+run the binaries in the foreground. Installers do not silently start a native
+service. The built `bin/team-relay` command also accepts these lifecycle commands
+with `--config /path/to/team-relay.conf`.
 
 Prefer the expanded or recovery-oriented path? See the
 [quickstart](docs/quickstart.md) and [deployment guide](docs/deployment.md).
@@ -253,7 +284,8 @@ named explicitly.
 The Compose stack contains the relay and one state service. Valkey, a
 Redis-protocol-compatible server, is the default; Redis is a supported
 alternative selected through `.env`. Only one is required. The default
-published port is loopback-only, and a non-loopback deployment requires HTTPS.
+published port is loopback-only. HTTPS is required for public addresses and DNS
+hostnames; unencrypted HTTP to literal private IPs is available for trusted LAN tests.
 
 The recipient receiver remains native because it needs the recipient's local
 agent CLI, repositories, memories, MCP configuration, credentials, and approval

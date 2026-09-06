@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/mohitbadwal/team-relay/internal/auth"
 	"github.com/mohitbadwal/team-relay/internal/store"
+	"github.com/mohitbadwal/team-relay/internal/transportpolicy"
 )
 
 const maximumResponseBody = 2 << 20
@@ -360,18 +360,22 @@ func adminClient(serverURL, tokenFile string) (*apiClient, error) {
 
 func newAPIClient(rawURL, token string) (*apiClient, error) {
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
 		return nil, errors.New("server must be an http or https URL without embedded credentials")
 	}
-	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(rawURL, "#") {
+		return nil, errors.New("server URL must not contain a query or a fragment")
+	}
+	if parsed.Scheme == "http" && !transportpolicy.PlainHTTPAllowed(parsed.Hostname()) {
 		// A Compose tools container may reach the relay by its exact service DNS
 		// name on an isolated internal network. The exception is opt-in and bound
-		// to one operator-configured hostname; all other remote HTTP stays denied.
+		// to one operator-configured hostname; other non-private HTTP stays denied.
 		allowedHost := strings.TrimSpace(os.Getenv("TEAM_RELAY_ALLOW_HTTP_HOST"))
 		if allowedHost == "" || !strings.EqualFold(parsed.Hostname(), allowedHost) {
-			return nil, errors.New("server must use HTTPS unless it is loopback-only or matches TEAM_RELAY_ALLOW_HTTP_HOST")
+			return nil, errors.New(transportpolicy.HTTPRequirement + "; an admin-only exact internal hostname may be configured with TEAM_RELAY_ALLOW_HTTP_HOST")
 		}
 	}
+	transportpolicy.WarnPrivateLANHTTP(rawURL, os.Stderr)
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
@@ -497,14 +501,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return "-"
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func usageError() error {
